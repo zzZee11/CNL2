@@ -1,2 +1,2 @@
 # CNL2
-Human following autonous robot
+Human following autonomous robot
