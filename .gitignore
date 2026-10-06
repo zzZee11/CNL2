@@ -1,0 +1,76 @@
+# =========================
+# Python
+# =========================
+
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python packaging
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# =========================
+# IDE / Editor
+# =========================
+
+.vscode/
+.idea/
+
+# =========================
+# Environment / Secrets
+# =========================
+
+.env
+.env.*
+!.env.example
+
+# =========================
+# OS files
+# =========================
+
+.DS_Store
+Thumbs.db
+
+# =========================
+# Logs
+# =========================
+
+*.log
+
+# =========================
+# Temporary files
+# =========================
+
+*.tmp
+*.temp
+
+# =========================
+# Computer Vision outputs
+# =========================
+
+output/
+outputs/
+captures/
+recordings/
+
+# =========================
+# Model files
+# =========================
+
+# Uncomment these if models are too large for Git
+# *.tflite
+# *.onnx
+# *.pb
+# *.pbtxt
+# *.weights
+# *.pt
+# *.pth
