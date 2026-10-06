@@ -4,7 +4,9 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class Config:
-    model_path: Path = Path("/home/zee/projects/CNL2/rasberrypi_host/vision/models/detect.tflite")
+    model_path: Path | str = (
+        Path(__file__).resolve().parent / "models" / "yolo26n.pt"
+    )
 
     camera_index: int = 0
     camera_width: int = 640
@@ -12,6 +14,8 @@ class Config:
 
     confidence_threshold: float = 0.35
     inference_threads: int = 2
+    device: str | None = None
+    imgsz: int = 640
 
     # Tracking and target retention are measured in seconds, not frames:
     # inference FPS on a Pi can vary substantially.
@@ -33,6 +37,8 @@ class Config:
             raise ValueError("confidence_threshold must be between 0 and 1.")
         if self.inference_threads < 1:
             raise ValueError("inference_threads must be positive.")
+        if self.imgsz < 1:
+            raise ValueError("imgsz must be positive.")
         if self.track_lost_seconds <= 0 or self.target_hold_seconds <= 0:
             raise ValueError("Tracking timeouts must be positive.")
         if self.initial_target_min_hits < 1:

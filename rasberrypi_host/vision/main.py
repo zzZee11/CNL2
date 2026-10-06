@@ -1,6 +1,7 @@
 import argparse
 import json
 import logging
+from pathlib import Path
 import sys
 import time
 from dataclasses import replace
@@ -65,13 +66,23 @@ def draw_debug(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Pi person-following vision")
-    parser.add_argument("--model", default="/home/zee/projects/CNL2/rasberrypi_host/vision/models/detect.tflite")
+    parser = argparse.ArgumentParser(description="Pi person-following vision with YOLO26")
+    parser.add_argument(
+        "--model",
+        default=str(Path(__file__).resolve().parent / "models" / "yolo26n.pt"),
+        help="Path or name of the YOLO26 model",
+    )
     parser.add_argument("--camera", type=int, default=0)
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--height", type=int, default=480)
     parser.add_argument("--confidence", type=float, default=0.35)
     parser.add_argument("--threads", type=int, default=2)
+    parser.add_argument(
+        "--device",
+        default=None,
+        help="Device to run inference on (e.g. 'cpu', 'cuda', '0')",
+    )
+    parser.add_argument("--imgsz", type=int, default=640, help="Inference image size")
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--log-level", default="INFO")
     return parser.parse_args()
@@ -85,8 +96,6 @@ def main() -> int:
         format="%(asctime)s %(levelname)s %(message)s",
     )
 
-    from pathlib import Path
-
     config = replace(
         Config(),
         model_path=Path(args.model),
@@ -95,6 +104,8 @@ def main() -> int:
         camera_height=args.height,
         confidence_threshold=args.confidence,
         inference_threads=args.threads,
+        device=args.device,
+        imgsz=args.imgsz,
         debug_view=args.debug,
     )
 
