@@ -104,7 +104,6 @@ def main() -> int:
         inference_threads=args.threads,
         device=args.device,
         imgsz=args.imgsz,
-        debug_view=args.debug,
     )
 
     capture: cv2.VideoCapture | None = None
