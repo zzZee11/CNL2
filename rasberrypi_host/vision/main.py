@@ -51,7 +51,16 @@ def draw_debug(frame: NDArray[np.uint8], result: dict[str, Any], fps: float) -> 
             if result["target_id"] is not None
             else "No target"
         )
-
+    motion_label = (
+    f"Motion: {result['movement_direction']} | "
+    f"Depth trend: {result['distance_trend']}"
+    )
+    
+    cv2.putText(
+    image, motion_label, (10, 75),
+    cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 2,
+    )
+    
     cv2.putText(
         image, status, (10, 25),
         cv2.FONT_HERSHEY_SIMPLEX, 0.58, (255, 255, 255), 2,

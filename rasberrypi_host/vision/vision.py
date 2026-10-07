@@ -7,7 +7,7 @@ from config import Config
 from detector import PersonDetector
 from target_selector import TargetSelector
 from tracker import PersonTracker, Track, center
-
+from motion import TargetMotionAnalyzer
 
 def person_record(track: Track) -> dict[str, Any]:
     x1, y1, x2, y2 = track.bbox
@@ -31,7 +31,9 @@ class VisionSystem:
         self.selector = TargetSelector(
             config.target_hold_seconds, config.initial_target_min_hits
         )
-
+        self.motion = TargetMotionAnalyzer()
+        
+        
     def process_frame(
         self, frame: NDArray[np.uint8], now: float
     ) -> dict[str, Any]:
@@ -42,6 +44,8 @@ class VisionSystem:
         detections = self.detector.detect(frame)
         tracks = self.tracker.update(detections, now)
         target = self.selector.select(tracks, width, height, now)
+        motion = self.motion.update(target, width, height, now)
+
 
         result: dict[str, Any] = {
             "target_detected": target is not None,
@@ -52,6 +56,7 @@ class VisionSystem:
             "frame_size": [width, height],
             "timestamp_monotonic": round(now, 4),
         }
+        result.update(motion)
 
         if target is None:
             # A non-null target_id means the ID is temporarily reserved;
