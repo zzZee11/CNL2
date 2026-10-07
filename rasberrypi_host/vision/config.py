@@ -13,18 +13,19 @@ class Config:
     camera_height: int = 480
 
     confidence_threshold: float = 0.35
-    inference_threads: int = 2
+    inference_threads: int = 6
     device: str | None = None
     imgsz: int = 640
 
     # Tracking and target retention are measured in seconds, not frames:
     # inference FPS on a Pi can vary substantially.
+
     track_lost_seconds: float = 2.0
     target_hold_seconds: float = 2.0
     initial_target_min_hits: int = 2
 
     # For visualization only. JSON is emitted in either mode.
-    debug_view: bool = False
+    debug_view: bool = True
 
     # Optional calibrated metric estimate. Leave unset by default.
     focal_length_px: float | None = None
@@ -44,8 +45,7 @@ class Config:
         if self.initial_target_min_hits < 1:
             raise ValueError("initial_target_min_hits must be positive.")
         if (self.focal_length_px is None) != (
-            self.assumed_person_height_m is None
-        ):
+            self.assumed_person_height_m is None):
             raise ValueError(
                 "Set both focal_length_px and assumed_person_height_m, "
                 "or neither."
