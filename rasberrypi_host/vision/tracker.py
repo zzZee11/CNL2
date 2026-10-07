@@ -1,9 +1,7 @@
 from dataclasses import dataclass
-
 from detector import PersonDetection
 
 Box = tuple[float, float, float, float]
-
 
 def center(box: Box) -> tuple[float, float]:
     x1, y1, x2, y2 = box
@@ -18,7 +16,6 @@ def iou(a: Box, b: Box) -> float:
     area_b = max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
     union = area_a + area_b - intersection
     return intersection / union if union > 0 else 0.0
-
 
 @dataclass
 class Track:

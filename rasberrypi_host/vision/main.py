@@ -17,9 +17,7 @@ from vision import VisionSystem
 LOG = logging.getLogger("computer_vision")
 
 
-def draw_debug(
-    frame: NDArray[np.uint8], result: dict[str, Any], fps: float
-) -> NDArray[np.uint8]:
+def draw_debug(frame: NDArray[np.uint8], result: dict[str, Any], fps: float) -> NDArray[np.uint8]:
     image = frame.copy()
     height, width = image.shape[:2]
     cv2.line(
