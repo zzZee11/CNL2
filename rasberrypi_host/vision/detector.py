@@ -6,6 +6,8 @@ from numpy.typing import NDArray
 
 from config import Config
 
+from ultralytics import YOLO
+import torch
 
 @dataclass(frozen=True)
 class PersonDetection:
@@ -20,14 +22,8 @@ class PersonDetector:
     PERSON_CLASS_ID = 0
 
     def __init__(self, config: Config) -> None:
-        try:
-            from ultralytics import YOLO
-            import torch
-        except ImportError as exc:
-            raise RuntimeError(
-                "Install ultralytics and torch from requirements.txt."
-            ) from exc
-
+        
+        config.validate()
         self.threshold = config.confidence_threshold
         self.device = getattr(config, "device", None)
         self.imgsz = getattr(config, "imgsz", 640)
