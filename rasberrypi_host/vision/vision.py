@@ -27,11 +27,14 @@ class VisionSystem:
         config.validate()
         self.config = config
         self.detector = PersonDetector(config)
-        self.tracker = PersonTracker(config.track_lost_seconds)
+        self.tracker = PersonTracker(
+            config.track_lost_seconds,
+            kp_smoothing_alpha=config.keypoint_smoothing_alpha,
+        )
         self.selector = TargetSelector(
             config.target_hold_seconds, config.initial_target_min_hits
         )
-        self.motion = TargetMotionAnalyzer()
+        self.motion = TargetMotionAnalyzer(config=config)
         
         
     def process_frame(

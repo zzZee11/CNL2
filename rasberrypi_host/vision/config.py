@@ -5,7 +5,7 @@ from pathlib import Path
 @dataclass(frozen=True)
 class Config:
     model_path: Path | str = (
-        Path(__file__).resolve().parent / "models" / "yolo26n.pt"
+        Path(__file__).resolve().parent / "models" / "yolo26n-pose.pt"
     )
 
     camera_index: int = 0
@@ -31,6 +31,39 @@ class Config:
     focal_length_px: float | None = None
     assumed_person_height_m: float | None = None
 
+    # ── Pose & Gait Stance Detection ──────────────────────────────────
+    # Minimum keypoint confidence to consider a joint visible/usable.
+    keypoint_confidence_threshold: float = 0.35
+
+    # Rolling window duration (seconds) for stride variance and cadence.
+    # ~10-14 frames at typical Pi inference FPS.
+    gait_window_seconds: float = 0.7
+
+    # Normalized stride variance below this → person classified as
+    # "standing" (feet planted, no stepping).
+    gait_stop_variance_threshold: float = 0.0020
+
+    # Normalized stride variance above this → person classified as
+    # "walking" (active gait cycle).
+    gait_walk_variance_threshold: float = 0.0055
+
+    # ── Vision-Only Car Stop Detection ────────────────────────────────
+    # Fractional depth-proxy expansion rate per second above which the
+    # camera is considered to be closing in on the target.
+    looming_stop_threshold: float = 0.08
+
+    # Time-to-collision (tau) in seconds; below this → emergency brake
+    # regardless of gait state.
+    critical_ttc_seconds: float = 1.2
+
+    # Debounce: once a stop is commanded, hold it for at least this many
+    # seconds to avoid brake flicker from noisy keypoints.
+    stop_hold_seconds: float = 0.5
+
+    # Exponential smoothing alpha for keypoint jitter filtering.
+    # 0.0 = full smoothing (lag), 1.0 = no smoothing (raw detections).
+    keypoint_smoothing_alpha: float = 0.55
+
     def validate(self) -> None:
         if self.camera_width < 1 or self.camera_height < 1:
             raise ValueError("Camera dimensions must be positive.")
@@ -49,4 +82,33 @@ class Config:
             raise ValueError(
                 "Set both focal_length_px and assumed_person_height_m, "
                 "or neither."
+            )
+        if not 0.0 < self.keypoint_confidence_threshold < 1.0:
+            raise ValueError(
+                "keypoint_confidence_threshold must be between 0 and 1."
+            )
+        if self.gait_window_seconds <= 0:
+            raise ValueError("gait_window_seconds must be positive.")
+        if self.gait_stop_variance_threshold <= 0:
+            raise ValueError(
+                "gait_stop_variance_threshold must be positive."
+            )
+        if self.gait_walk_variance_threshold <= 0:
+            raise ValueError(
+                "gait_walk_variance_threshold must be positive."
+            )
+        if self.gait_stop_variance_threshold >= self.gait_walk_variance_threshold:
+            raise ValueError(
+                "gait_stop_variance_threshold must be less than "
+                "gait_walk_variance_threshold."
+            )
+        if self.looming_stop_threshold <= 0:
+            raise ValueError("looming_stop_threshold must be positive.")
+        if self.critical_ttc_seconds <= 0:
+            raise ValueError("critical_ttc_seconds must be positive.")
+        if self.stop_hold_seconds < 0:
+            raise ValueError("stop_hold_seconds must be non-negative.")
+        if not 0.0 < self.keypoint_smoothing_alpha <= 1.0:
+            raise ValueError(
+                "keypoint_smoothing_alpha must be in (0.0, 1.0]."
             )

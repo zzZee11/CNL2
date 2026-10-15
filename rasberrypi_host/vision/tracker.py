@@ -1,4 +1,9 @@
-from dataclasses import dataclass
+from collections import deque
+from dataclasses import dataclass, field
+
+import numpy as np
+from numpy.typing import NDArray
+
 from detector import PersonDetection
 
 Box = tuple[float, float, float, float]
@@ -17,6 +22,11 @@ def iou(a: Box, b: Box) -> float:
     union = area_a + area_b - intersection
     return intersection / union if union > 0 else 0.0
 
+
+# Maximum keypoint history entries kept per track (used by gait analysis).
+_MAX_KEYPOINT_HISTORY = 30
+
+
 @dataclass
 class Track:
     id: int
@@ -29,6 +39,19 @@ class Track:
     hits: int = 1
     visible: bool = True
 
+    # ── Pose keypoints ────────────────────────────────────────────────
+    # Latest smoothed keypoints array: shape (17, 3) = [x, y, conf].
+    # None when the model is detection-only or detection had no keypoints.
+    keypoints: NDArray[np.float32] | None = None
+
+    # Rolling history of (timestamp, raw_keypoints) for gait analysis.
+    keypoints_history: deque = field(
+        default_factory=lambda: deque(maxlen=_MAX_KEYPOINT_HISTORY)
+    )
+
+    # Exponential smoothing factor for keypoint position filtering.
+    _kp_alpha: float = 0.55
+
     def predict_to(self, now: float) -> None:
         dt = max(0.0, min(now - self.last_update, 0.5))
         dx, dy = self.velocity[0] * dt, self.velocity[1] * dt
@@ -37,7 +60,12 @@ class Track:
         self.last_update = now
         self.visible = False
 
-    def correct(self, detection: PersonDetection, now: float) -> None:
+    def correct(
+        self,
+        detection: PersonDetection,
+        now: float,
+        kp_alpha: float = 0.55,
+    ) -> None:
         new_center = center(detection.bbox)
         dt = max(now - self.last_seen, 1e-3)
 
@@ -57,12 +85,45 @@ class Track:
         self.hits += 1
         self.visible = True
 
+        # ── Update keypoints ──────────────────────────────────────────
+        if detection.keypoints is not None:
+            raw_kp = detection.keypoints  # (17, 3)
+            if self.keypoints is not None:
+                # Exponentially smooth x, y positions for joints that are
+                # confident in both the old and new observation.  Confidence
+                # values are always taken from the latest detection.
+                smoothed = self.keypoints.copy()
+                for j in range(raw_kp.shape[0]):
+                    if raw_kp[j, 2] > 0.01 and smoothed[j, 2] > 0.01:
+                        smoothed[j, 0] = (
+                            (1 - kp_alpha) * smoothed[j, 0]
+                            + kp_alpha * raw_kp[j, 0]
+                        )
+                        smoothed[j, 1] = (
+                            (1 - kp_alpha) * smoothed[j, 1]
+                            + kp_alpha * raw_kp[j, 1]
+                        )
+                    else:
+                        smoothed[j, 0] = raw_kp[j, 0]
+                        smoothed[j, 1] = raw_kp[j, 1]
+                    smoothed[j, 2] = raw_kp[j, 2]
+                self.keypoints = smoothed
+            else:
+                self.keypoints = raw_kp.copy()
+
+            self.keypoints_history.append((now, raw_kp.copy()))
+
 
 class PersonTracker:
     """Small greedy SORT-style tracker; no neural appearance embedding."""
 
-    def __init__(self, lost_seconds: float) -> None:
+    def __init__(
+        self,
+        lost_seconds: float,
+        kp_smoothing_alpha: float = 0.55,
+    ) -> None:
         self.lost_seconds = lost_seconds
+        self.kp_smoothing_alpha = kp_smoothing_alpha
         self.tracks: dict[int, Track] = {}
         self.next_id = 1
 
@@ -111,7 +172,11 @@ class PersonTracker:
         for _, track_id, detection_index in sorted(candidates, reverse=True):
             if track_id in used_tracks or detection_index in used_detections:
                 continue
-            self.tracks[track_id].correct(detections[detection_index], now)
+            self.tracks[track_id].correct(
+                detections[detection_index],
+                now,
+                kp_alpha=self.kp_smoothing_alpha,
+            )
             used_tracks.add(track_id)
             used_detections.add(detection_index)
 
@@ -120,7 +185,7 @@ class PersonTracker:
                 continue
             track_id = self.next_id
             self.next_id += 1
-            self.tracks[track_id] = Track(
+            new_track = Track(
                 id=track_id,
                 bbox=detection.bbox,
                 confidence=detection.confidence,
@@ -128,6 +193,12 @@ class PersonTracker:
                 last_update=now,
                 observed_center=center(detection.bbox),
             )
+            if detection.keypoints is not None:
+                new_track.keypoints = detection.keypoints.copy()
+                new_track.keypoints_history.append(
+                    (now, detection.keypoints.copy())
+                )
+            self.tracks[track_id] = new_track
 
         # Only current observations count as detected people. Lost tracks
         # remain internal so a returning observation can recover its ID.

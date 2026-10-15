@@ -13,17 +13,75 @@ from numpy.typing import NDArray
 
 from config import Config
 from vision import VisionSystem
+from tracker import Track
 
 LOG = logging.getLogger("computer_vision")
 
 
-def draw_debug(frame: NDArray[np.uint8], result: dict[str, Any], fps: float) -> NDArray[np.uint8]:
+# ── COCO-17 skeleton connectivity for drawing ────────────────────────
+# Each pair is (keypoint_a, keypoint_b, color_bgr).
+_SKELETON_LINKS: list[tuple[int, int, tuple[int, int, int]]] = [
+    # Head / torso
+    (5, 6, (200, 200, 200)),    # L shoulder – R shoulder
+    (5, 11, (200, 200, 200)),   # L shoulder – L hip
+    (6, 12, (200, 200, 200)),   # R shoulder – R hip
+    (11, 12, (200, 200, 200)),  # L hip – R hip
+    # Left arm  (blue-ish)
+    (5, 7, (255, 120, 60)),     # L shoulder – L elbow
+    (7, 9, (255, 120, 60)),     # L elbow – L wrist
+    # Right arm (red-ish)
+    (6, 8, (60, 120, 255)),     # R shoulder – R elbow
+    (8, 10, (60, 120, 255)),    # R elbow – R wrist
+    # Left leg  (blue-ish)
+    (11, 13, (255, 180, 60)),   # L hip – L knee
+    (13, 15, (255, 180, 60)),   # L knee – L ankle
+    # Right leg (red-ish)
+    (12, 14, (60, 180, 255)),   # R hip – R knee
+    (14, 16, (60, 180, 255)),   # R knee – R ankle
+]
+
+# Key joint indices to draw circles on.
+_KEY_JOINTS = [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+
+
+def _draw_skeleton(
+    image: NDArray[np.uint8],
+    keypoints: NDArray[np.float32],
+    conf_thresh: float = 0.35,
+) -> None:
+    """Draw pose skeleton lines and joint circles on *image*."""
+    for idx_a, idx_b, color in _SKELETON_LINKS:
+        if (keypoints[idx_a, 2] >= conf_thresh
+                and keypoints[idx_b, 2] >= conf_thresh):
+            pt_a = (int(keypoints[idx_a, 0]), int(keypoints[idx_a, 1]))
+            pt_b = (int(keypoints[idx_b, 0]), int(keypoints[idx_b, 1]))
+            cv2.line(image, pt_a, pt_b, color, 2, cv2.LINE_AA)
+
+    for idx in _KEY_JOINTS:
+        if keypoints[idx, 2] >= conf_thresh:
+            pt = (int(keypoints[idx, 0]), int(keypoints[idx, 1]))
+            cv2.circle(image, pt, 3, (0, 255, 255), -1, cv2.LINE_AA)
+
+
+def draw_debug(
+    frame: NDArray[np.uint8],
+    result: dict[str, Any],
+    fps: float,
+    tracks: list[Track] | None = None,
+    kp_conf_thresh: float = 0.35,
+) -> NDArray[np.uint8]:
     image = frame.copy()
     height, width = image.shape[:2]
     cv2.line(
         image, (width // 2, 0), (width // 2, height),
         (100, 100, 100), 1,
     )
+
+    # ── Draw pose skeletons for all visible tracks ────────────────────
+    if tracks:
+        for track in tracks:
+            if track.keypoints is not None:
+                _draw_skeleton(image, track.keypoints, kp_conf_thresh)
 
     for person in result["people"]:
         x1, y1, x2, y2 = (int(v) for v in person["bbox"])
@@ -51,14 +109,16 @@ def draw_debug(frame: NDArray[np.uint8], result: dict[str, Any], fps: float) -> 
             if result["target_id"] is not None
             else "No target"
         )
+
+    # ── Motion & depth labels ─────────────────────────────────────────
     motion_label = (
-    f"Motion: {result['movement_direction']} | "
-    f"Depth trend: {result['distance_trend']}"
+        f"Motion: {result['movement_direction']} | "
+        f"Depth trend: {result['distance_trend']}"
     )
     
     cv2.putText(
-    image, motion_label, (10, 75),
-    cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 2,
+        image, motion_label, (10, 75),
+        cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 2,
     )
     
     cv2.putText(
@@ -69,6 +129,78 @@ def draw_debug(frame: NDArray[np.uint8], result: dict[str, Any], fps: float) -> 
         image, f"FPS {fps:.1f}", (10, 50),
         cv2.FONT_HERSHEY_SIMPLEX, 0.58, (255, 255, 255), 2,
     )
+
+    # ── Gait state label ──────────────────────────────────────────────
+    gait_state = result.get("gait_state", "unknown")
+    gait_conf = result.get("gait_confidence", 0.0)
+    visibility = result.get("visibility", "none")
+
+    if gait_state == "walking":
+        gait_color = (0, 220, 0)
+    elif gait_state == "standing":
+        gait_color = (0, 220, 255)
+    elif gait_state == "slow_or_pausing":
+        gait_color = (0, 180, 255)
+    else:
+        gait_color = (180, 180, 180)
+
+    gait_label = (
+        f"Gait: {gait_state.upper()} ({gait_conf:.2f}) "
+        f"[{visibility}]"
+    )
+    cv2.putText(
+        image, gait_label, (10, 100),
+        cv2.FONT_HERSHEY_SIMPLEX, 0.52, gait_color, 2,
+    )
+
+    # ── Depth cascade source label ────────────────────────────────────
+    depth_src = result.get("depth_signal_source", "none")
+    depth_rate = result.get("depth_expansion_rate")
+    ttc = result.get("time_to_collision_s")
+    depth_label = f"Depth src: {depth_src}"
+    if depth_rate is not None:
+        depth_label += f"  rate: {depth_rate:+.4f}"
+    if ttc is not None:
+        depth_label += f"  TTC: {ttc:.1f}s"
+    cv2.putText(
+        image, depth_label, (10, 125),
+        cv2.FONT_HERSHEY_SIMPLEX, 0.48, (220, 220, 220), 1,
+    )
+
+    # ── Car stop status banner ────────────────────────────────────────
+    car_stop = result.get("car_stop_required", False)
+    emergency = result.get("emergency_brake", False)
+    stop_reason = result.get("stop_reason", "none")
+    interaction = result.get("interaction_state", "unknown")
+
+    if car_stop:
+        if emergency:
+            # Flashing red/yellow banner.
+            flash = int(time.monotonic() * 6) % 2 == 0
+            banner_color = (0, 0, 255) if flash else (0, 160, 255)
+            banner_text = (
+                f"!!! BRAKE: {stop_reason.upper().replace('_', ' ')} !!!"
+            )
+        else:
+            banner_color = (0, 180, 255)
+            banner_text = f"STOP: {stop_reason.replace('_', ' ')}"
+
+        # Draw filled banner at top of frame.
+        cv2.rectangle(image, (0, height - 40), (width, height), banner_color, -1)
+        cv2.putText(
+            image, banner_text,
+            (10, height - 12),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2,
+        )
+    else:
+        # Green "safe" indicator.
+        safe_label = f"FOLLOWING | {interaction.replace('_', ' ')}"
+        cv2.putText(
+            image, safe_label,
+            (10, height - 12),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 0), 2,
+        )
+
     return image
 
 
@@ -76,8 +208,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Pi person-following vision with YOLO26")
     parser.add_argument(
         "--model",
-        default=str(Path(__file__).resolve().parent / "models" / "yolo26n.pt"),
-        help="Path or name of the YOLO26 model",
+        default=str(Path(__file__).resolve().parent / "models" / "yolo26n-pose.pt"),
+        help="Path or name of the YOLO26 model (pose or detection)",
     )
     parser.add_argument("--camera", type=int, default=0)
     parser.add_argument("--width", type=int, default=640)
@@ -165,9 +297,18 @@ def main() -> int:
             print(json.dumps(result, separators=(",", ":")), flush=True)
 
             if config.debug_view:
+                # Collect visible tracks for skeleton drawing.
+                visible_tracks = [
+                    t for t in vision.tracker.tracks.values()
+                    if t.visible
+                ]
                 cv2.imshow(
                     "Person-following vision",
-                    draw_debug(frame, result, smoothed_fps),
+                    draw_debug(
+                        frame, result, smoothed_fps,
+                        tracks=visible_tracks,
+                        kp_conf_thresh=config.keypoint_confidence_threshold,
+                    ),
                 )
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     break
