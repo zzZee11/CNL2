@@ -1,0 +1,4 @@
+pyserial>=3.5
+pynput>=1.7.6
+rich>=13.0.0
+

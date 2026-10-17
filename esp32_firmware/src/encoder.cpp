@@ -1,0 +1,106 @@
+#include "encoder.h"
+
+// Define static members
+volatile int64_t EncoderManager::_ticksLeft = 0;
+volatile int64_t EncoderManager::_ticksRight = 0;
+portMUX_TYPE EncoderManager::_mux = portMUX_INITIALIZER_UNLOCKED;
+
+EncoderManager::EncoderManager()
+    : _prevTicksLeft(0), _prevTicksRight(0), _lastCalcTime(0),
+      _rpmLeft(0.0f), _rpmRight(0.0f) {}
+
+void EncoderManager::init() {
+    // Configure encoder input pins with internal pullups for noise immunity
+    pinMode(PIN_ENC_L_A, INPUT_PULLUP);
+    pinMode(PIN_ENC_L_B, INPUT_PULLUP);
+    pinMode(PIN_ENC_R_A, INPUT_PULLUP);
+    pinMode(PIN_ENC_R_B, INPUT_PULLUP);
+
+    // Attach hardware interrupts on Phase A pins
+    attachInterrupt(digitalPinToInterrupt(PIN_ENC_L_A), isrLeft, RISING);
+    attachInterrupt(digitalPinToInterrupt(PIN_ENC_R_A), isrRight, RISING);
+
+    reset();
+}
+
+void IRAM_ATTR EncoderManager::isrLeft() {
+    portENTER_CRITICAL_ISR(&_mux);
+    // If Phase B is LOW on Phase A rising edge, wheel is rotating forward
+    bool dir = digitalRead(PIN_ENC_L_B);
+    if (INVERT_LEFT_ENCODER) dir = !dir;
+
+    if (dir) {
+        _ticksLeft++;
+    } else {
+        _ticksLeft--;
+    }
+    portEXIT_CRITICAL_ISR(&_mux);
+}
+
+void IRAM_ATTR EncoderManager::isrRight() {
+    portENTER_CRITICAL_ISR(&_mux);
+    // If Phase B is LOW on Phase A rising edge, wheel is rotating forward
+    bool dir = digitalRead(PIN_ENC_R_B);
+    if (INVERT_RIGHT_ENCODER) dir = !dir;
+
+    if (dir) {
+        _ticksRight++;
+    } else {
+        _ticksRight--;
+    }
+    portEXIT_CRITICAL_ISR(&_mux);
+}
+
+int64_t EncoderManager::getTicksLeft() {
+    portENTER_CRITICAL(&_mux);
+    int64_t val = _ticksLeft;
+    portEXIT_CRITICAL(&_mux);
+    return val;
+}
+
+int64_t EncoderManager::getTicksRight() {
+    portENTER_CRITICAL(&_mux);
+    int64_t val = _ticksRight;
+    portEXIT_CRITICAL(&_mux);
+    return val;
+}
+
+void EncoderManager::reset() {
+    portENTER_CRITICAL(&_mux);
+    _ticksLeft = 0;
+    _ticksRight = 0;
+    portEXIT_CRITICAL(&_mux);
+
+    _prevTicksLeft = 0;
+    _prevTicksRight = 0;
+    _lastCalcTime = millis();
+    _rpmLeft = 0.0f;
+    _rpmRight = 0.0f;
+}
+
+void EncoderManager::update(unsigned long nowMs) {
+    unsigned long dt = nowMs - _lastCalcTime;
+    if (dt < RPM_CALC_INTERVAL_MS) {
+        return;
+    }
+
+    int64_t curLeft = getTicksLeft();
+    int64_t curRight = getTicksRight();
+
+    int64_t deltaLeft = curLeft - _prevTicksLeft;
+    int64_t deltaRight = curRight - _prevTicksRight;
+
+    _prevTicksLeft = curLeft;
+    _prevTicksRight = curRight;
+    _lastCalcTime = nowMs;
+
+    // RPM formula: (deltaTicks / TOTAL_TICKS_PER_REV) * (60,000 / dt_ms)
+    float rawRpmL = ((float)deltaLeft / (float)TOTAL_TICKS_PER_REV) * (60000.0f / (float)dt);
+    float rawRpmR = ((float)deltaRight / (float)TOTAL_TICKS_PER_REV) * (60000.0f / (float)dt);
+
+    // Apply exponential moving average filter (alpha = 0.6) to smooth encoder jitter
+    const float alpha = 0.6f;
+    _rpmLeft = (alpha * rawRpmL) + ((1.0f - alpha) * _rpmLeft);
+    _rpmRight = (alpha * rawRpmR) + ((1.0f - alpha) * _rpmRight);
+}
+
