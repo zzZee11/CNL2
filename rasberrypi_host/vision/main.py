@@ -211,7 +211,7 @@ def parse_args() -> argparse.Namespace:
         default=str(Path(__file__).resolve().parent / "models" / "yolo26n-pose.pt"),
         help="Path or name of the YOLO26 model (pose or detection)",
     )
-    parser.add_argument("--camera", type=int, default=0)
+    parser.add_argument("--camera", type=int, default=2)
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--height", type=int, default=480)
     parser.add_argument("--confidence", type=float, default=0.35)
