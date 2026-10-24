@@ -40,20 +40,23 @@
 // ==============================================================================
 // 3x VL53L0X Time-of-Flight (ToF) Distance Sensors Configuration
 // ==============================================================================
-// Direct 3-sensor obstacle sensing: Left (+45 deg), Center (0 deg forward), Right (-45 deg)
+// 3-sensor obstacle sensing: Left (+45 deg), Center (0 deg forward), Right (-45 deg)
+// Hardware Setup (2 XSHUT Pins):
+//   - Left Sensor (S1)  : XSHUT connected to PIN_XSHUT_LEFT
+//   - Center Sensor (S2): NO XSHUT connection (always powered, boot-configured first at 0x29)
+//   - Right Sensor (S3) : XSHUT connected to PIN_XSHUT_RIGHT
 #define USE_VL53L0X_SENSORS     true
 
-#define PIN_I2C_SDA             15  // ESP32 I2C SDA
-#define PIN_I2C_SCL             16  // ESP32 I2C SCL
+#define PIN_I2C_SDA             15  // ESP32 I2C SDA (configurable to any free GPIO)
+#define PIN_I2C_SCL             16  // ESP32 I2C SCL (configurable to any free GPIO)
 
-// XSHUT pins for sequential address initialization
+// Only 2 XSHUT pins required (Center sensor has no XSHUT connected)
 #define PIN_XSHUT_LEFT          1   // Left sensor XSHUT (Sensor 1, +45 deg)
-#define PIN_XSHUT_CENTER        2   // Center sensor XSHUT (Sensor 2, 0 deg)
-#define PIN_XSHUT_RIGHT         3   // Right sensor XSHUT (Sensor 3, -45 deg)
+#define PIN_XSHUT_RIGHT         2   // Right sensor XSHUT (Sensor 3, -45 deg)
 
 // Unique I2C addresses assigned sequentially during boot
 #define I2C_ADDR_VL53L0X_LEFT   0x30
-#define I2C_ADDR_VL53L0X_CENTER 0x31
+#define I2C_ADDR_VL53L0X_CENTER 0x31  // Center is re-addressed from 0x29 -> 0x31 first
 #define I2C_ADDR_VL53L0X_RIGHT  0x32
 
 #define TOF_READ_INTERVAL_MS    50  // 20 Hz distance sampling rate

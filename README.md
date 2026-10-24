@@ -207,18 +207,25 @@ You can connect the Raspberry Pi 4B directly to the ESP32-S3 via the 40-pin GPIO
 
 The robot car uses 3 laser ToF distance sensors for front collision avoidance and dynamic A* obstacle grid mapping:
 - **Left Sensor (S1)**: +45° angled
-- **Center Sensor (S2)**: 0° straight forward
+- **Center Sensor (S2)**: 0° straight forward (**No XSHUT connection required**)
 - **Right Sensor (S3)**: −45° angled
 
 | Signal | ESP32-S3 GPIO | Sensor Pin | Description |
 |---|---|---|---|
-| I2C SDA | **GPIO 15** | SDA (shared) | Common I2C Data bus |
-| I2C SCL | **GPIO 16** | SCL (shared) | Common I2C Clock bus |
-| Sensor Power | **3.3V / VIN** | VIN (shared) | 3.3V or 5V logic supply |
+| I2C SDA | **GPIO 15** | SDA (shared) | Common I2C Data bus (can be changed to any free GPIO) |
+| I2C SCL | **GPIO 16** | SCL (shared) | Common I2C Clock bus (can be changed to any free GPIO) |
+| Sensor Power | **3.3V / VIN** | VIN (shared) | 3.3V logic supply |
 | Ground | **GND** | GND (shared) | Common Ground |
-| Left XSHUT | **GPIO 1** | XSHUT (S1) | Sequential address init (assigned to `0x30`) |
-| Center XSHUT | **GPIO 2** | XSHUT (S2) | Sequential address init (assigned to `0x31`) |
-| Right XSHUT | **GPIO 3** | XSHUT (S3) | Sequential address init (assigned to `0x32`) |
+| Left XSHUT | **GPIO 1** | XSHUT (S1) | Software boot control (re-addressed to `0x30`) |
+| Center XSHUT | *Not Connected* | *(None)* | **Always enabled** (re-addressed first from `0x29` → `0x31`) |
+| Right XSHUT | **GPIO 2** | XSHUT (S3) | Software boot control (re-addressed to `0x32`) |
+
+> **💡 How 2 XSHUT Pins Service 3 Sensors**:
+> 1. At boot, ESP32 drives **Left XSHUT LOW** and **Right XSHUT LOW** to put them to sleep.
+> 2. The **Center Sensor** has no XSHUT, so it is the only sensor active at factory default `0x29`. The firmware initializes it and immediately moves its address to `0x31`, freeing `0x29`.
+> 3. The firmware releases **Left XSHUT HIGH** (boots at `0x29`), moves it to `0x30`, freeing `0x29` again.
+> 4. The firmware releases **Right XSHUT HIGH** (boots at `0x29`) and moves it to `0x32`.
+> 5. All 3 sensors now operate concurrently on unique I2C addresses with zero bus collisions.
 
 ---
 

@@ -10,12 +10,12 @@
 #define SCL_PIN 16
 
 // ==================================================
-// XSHUT PINS
+// XSHUT PINS (Only 2 pins: Middle sensor has NO XSHUT)
 // ==================================================
 
-#define XSHUT_1 1   // Sensor 1 (Left,   +45 deg)
-#define XSHUT_2 2   // Sensor 2 (Center,   0 deg forward)
-#define XSHUT_3 3   // Sensor 3 (Right,  -45 deg)
+#define XSHUT_LEFT   1   // Left sensor XSHUT (Sensor 1, +45 deg)
+#define XSHUT_RIGHT  2   // Right sensor XSHUT (Sensor 3, -45 deg)
+// Note: Middle sensor (Sensor 2) has NO XSHUT pin connected (always powered)
 
 // ==================================================
 // I2C ADDRESSES
@@ -34,22 +34,18 @@ VL53L0X sensor2;
 VL53L0X sensor3;
 
 // ==================================================
-// INITIALIZE ONE SENSOR
+// INITIALIZE SENSORS
 // ==================================================
 
-bool initializeSensor(
+bool initializeSensorWithXshut(
   VL53L0X &sensor,
   int xshutPin,
   uint8_t newAddress,
   const char *sensorName
 ) {
-  // Keep the sensor disabled initially.
-  digitalWrite(xshutPin, LOW);
-  delay(20);
-
-  // Enable this sensor.
+  // Enable this sensor via XSHUT.
   digitalWrite(xshutPin, HIGH);
-  delay(50);
+  delay(30);
 
   // Initialize the sensor at its default address (0x29).
   if (!sensor.init()) {
@@ -60,17 +56,35 @@ bool initializeSensor(
 
   // Assign a unique I2C address.
   sensor.setAddress(newAddress);
-
-  // Configure timeout.
-  sensor.setTimeout(1000);
-
-  // Configure continuous distance measurements.
+  sensor.setTimeout(500);
   sensor.startContinuous(100);
 
   Serial.print(sensorName);
   Serial.print(": Initialized successfully. I2C address = 0x");
   Serial.println(newAddress, HEX);
+  return true;
+}
 
+bool initializeCenterSensorNoXshut(
+  VL53L0X &sensor,
+  uint8_t newAddress,
+  const char *sensorName
+) {
+  // Center sensor is already powered at default address (0x29).
+  if (!sensor.init()) {
+    Serial.print(sensorName);
+    Serial.println(": Initialization FAILED at 0x29");
+    return false;
+  }
+
+  // Assign unique I2C address to free 0x29 for Left and Right.
+  sensor.setAddress(newAddress);
+  sensor.setTimeout(500);
+  sensor.startContinuous(100);
+
+  Serial.print(sensorName);
+  Serial.print(": Initialized successfully (no XSHUT). I2C address = 0x");
+  Serial.println(newAddress, HEX);
   return true;
 }
 
@@ -116,69 +130,55 @@ void setup() {
   Serial.println("  THREE VL53L0X SENSOR SYSTEM");
   Serial.println("================================");
 
-  // Configure XSHUT pins.
-  pinMode(XSHUT_1, OUTPUT);
-  pinMode(XSHUT_2, OUTPUT);
-  pinMode(XSHUT_3, OUTPUT);
+  // Configure the 2 XSHUT pins (Middle sensor has no XSHUT pin connected)
+  pinMode(XSHUT_LEFT, OUTPUT);
+  pinMode(XSHUT_RIGHT, OUTPUT);
 
-  // Disable all sensors before initialization.
-  digitalWrite(XSHUT_1, LOW);
-  digitalWrite(XSHUT_2, LOW);
-  digitalWrite(XSHUT_3, LOW);
+  // Disable Left and Right sensors initially
+  digitalWrite(XSHUT_LEFT, LOW);
+  digitalWrite(XSHUT_RIGHT, LOW);
 
-  delay(100);
+  delay(50);
 
   // Initialize the I2C bus.
   Wire.begin(SDA_PIN, SCL_PIN);
-
   Wire.setClock(100000);
 
   Serial.println("I2C bus initialized.");
 
-  // Initialize sensors sequentially.
-  // Each previously initialized sensor remains enabled
-  // at its newly assigned address.
-
-  bool sensor1OK = initializeSensor(
-    sensor1,
-    XSHUT_1,
-    SENSOR_1_ADDRESS,
-    "Sensor 1"
-  );
-
-  if (!sensor1OK) {
-    Serial.println("ERROR: Sensor 1 failed. Check wiring.");
-    while (true) {
-      delay(1000);
-    }
-  }
-
-  bool sensor2OK = initializeSensor(
+  // Step 1: Initialize Center sensor (Sensor 2) first at default 0x29, then re-address to 0x31
+  bool sensor2OK = initializeCenterSensorNoXshut(
     sensor2,
-    XSHUT_2,
     SENSOR_2_ADDRESS,
-    "Sensor 2"
+    "Center Sensor (S2)"
   );
 
   if (!sensor2OK) {
-    Serial.println("ERROR: Sensor 2 failed. Check wiring.");
-    while (true) {
-      delay(1000);
-    }
+    Serial.println("WARNING: Center Sensor (S2) not detected at 0x29.");
   }
 
-  bool sensor3OK = initializeSensor(
+  // Step 2: Release Left sensor (Sensor 1), boots at default 0x29, then re-address to 0x30
+  bool sensor1OK = initializeSensorWithXshut(
+    sensor1,
+    XSHUT_LEFT,
+    SENSOR_1_ADDRESS,
+    "Left Sensor (S1)"
+  );
+
+  if (!sensor1OK) {
+    Serial.println("WARNING: Left Sensor (S1) failed.");
+  }
+
+  // Step 3: Release Right sensor (Sensor 3), boots at default 0x29, then re-address to 0x32
+  bool sensor3OK = initializeSensorWithXshut(
     sensor3,
-    XSHUT_3,
+    XSHUT_RIGHT,
     SENSOR_3_ADDRESS,
-    "Sensor 3"
+    "Right Sensor (S3)"
   );
 
   if (!sensor3OK) {
-    Serial.println("ERROR: Sensor 3 failed. Check wiring.");
-    while (true) {
-      delay(1000);
-    }
+    Serial.println("WARNING: Right Sensor (S3) failed.");
   }
 
   Serial.println();

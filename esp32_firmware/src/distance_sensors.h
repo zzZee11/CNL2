@@ -29,7 +29,8 @@ private:
     VL53L0X _sensorCenter;
     VL53L0X _sensorRight;
 
-    bool initSingleSensor(VL53L0X& sensor, int xshutPin, uint8_t newAddress, const char* name);
+    bool initCenterSensor(VL53L0X& sensor, uint8_t newAddress, const char* name);
+    bool initSensorWithXshut(VL53L0X& sensor, int xshutPin, uint8_t newAddress, const char* name);
 #endif
 
     bool _sensorLeftReady;
