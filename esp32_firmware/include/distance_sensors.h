@@ -42,3 +42,4 @@ private:
 
     unsigned long _lastReadTime;
 };
+
