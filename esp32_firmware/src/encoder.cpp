@@ -94,9 +94,9 @@ void EncoderManager::update(unsigned long nowMs) {
     _prevTicksRight = curRight;
     _lastCalcTime = nowMs;
 
-    // RPM formula: (deltaTicks / TOTAL_TICKS_PER_REV) * (60,000 / dt_ms)
-    float rawRpmL = ((float)deltaLeft / (float)TOTAL_TICKS_PER_REV) * (60000.0f / (float)dt);
-    float rawRpmR = ((float)deltaRight / (float)TOTAL_TICKS_PER_REV) * (60000.0f / (float)dt);
+    // RPM formula: (deltaTicks / WHEEL_PULSES_PER_REV) * (60,000 / dt_ms)
+    float rawRpmL = ((float)deltaLeft / (float)WHEEL_PULSES_PER_REV) * (60000.0f / (float)dt);
+    float rawRpmR = ((float)deltaRight / (float)WHEEL_PULSES_PER_REV) * (60000.0f / (float)dt);
 
     // Apply exponential moving average filter (alpha = 0.6) to smooth encoder jitter
     const float alpha = 0.6f;

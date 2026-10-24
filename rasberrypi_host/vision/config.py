@@ -2,18 +2,27 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+def _get_default_model_path() -> Path:
+    models_dir = Path(__file__).resolve().parent / "models"
+    tflite = models_dir / "detect.tflite"
+    if tflite.is_file():
+        return tflite
+    yolo_pose = models_dir / "yolo26n-pose.pt"
+    if yolo_pose.is_file():
+        return yolo_pose
+    return models_dir / "yolo26n.pt"
+
+
 @dataclass(frozen=True)
 class Config:
-    model_path: Path | str = (
-        Path(__file__).resolve().parent / "models" / "yolo26n-pose.pt"
-    )
+    model_path: Path | str = _get_default_model_path()
 
     camera_index: int = 0
     camera_width: int = 640
     camera_height: int = 480
 
     confidence_threshold: float = 0.35
-    inference_threads: int = 6
+    inference_threads: int = 2
     device: str | None = None
     imgsz: int = 640
 

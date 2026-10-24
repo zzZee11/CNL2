@@ -53,9 +53,10 @@
 // ==============================================================================
 // Encoder & Odometry Parameters
 // ==============================================================================
-#define ENCODER_PPR         11.0f   // Pulses Per Revolution on motor shaft
-#define MOTOR_GEAR_RATIO    30.0f   // Gearbox reduction ratio (30:1)
-#define TOTAL_TICKS_PER_REV (ENCODER_PPR * MOTOR_GEAR_RATIO)
+// Pulses Per Revolution (PPR) of the wheel (1 full wheel turn)
+#define WHEEL_PULSES_PER_REV    330.0f
+#define TOTAL_TICKS_PER_REV     WHEEL_PULSES_PER_REV
+#define PULSES_PER_REVOLUTION   WHEEL_PULSES_PER_REV
 
 #define INVERT_LEFT_ENCODER   true
 #define INVERT_RIGHT_ENCODER  false

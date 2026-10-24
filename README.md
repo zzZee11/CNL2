@@ -249,7 +249,7 @@ CNL2/
 - **Git** for cloning the repository
 
 ```bash
-git clone https://github.com/<your-username>/CNL2.git
+git clone https://github.com/zzZee11/CNL2.git
 cd CNL2
 ```
 
@@ -320,26 +320,37 @@ cd CNL2
 
 ---
 
-### 3. Vision Pipeline (Raspberry Pi)
+### 3. Vision Pipeline (Raspberry Pi 4B)
 
-> **Note**: This component is optional and still under active development. It requires a Raspberry Pi with a camera module.
+> **Note**: For edge devices like the Raspberry Pi 4B (4GB RAM, 16GB MicroSD), do **not** install full PyTorch (`torch`), which requires >3GB disk space and exhausts SD card storage. Use the lightweight **TFLite runtime** (~3MB) which runs the included `detect.tflite` model at 15–25 FPS.
 
-1. **Install dependencies**:
+1. **Reclaim SD card space if you encountered "No space left on device"**:
    ```bash
-   cd rasberrypi_host/vision
-   pip install -r requirements.txt
-   ```
-   This installs:
-   | Package | Purpose |
-   |---|---|
-   | `ultralytics` | YOLO object detection & pose estimation |
-   | `torch` / `torchvision` | PyTorch deep learning runtime |
-   | `opencv-python` | Camera capture & image processing |
-   | `numpy` | Numerical computation |
+   # Clear failed pip downloads and cache
+   pip cache purge
+   rm -rf ~/.cache/pip /tmp/pip-*
+   sudo apt clean && sudo apt autoremove -y
 
-2. **Configure** `rasberrypi_host/robot_main_1.py`:
-   - Set `SERIAL_PORT` to your ESP32 serial device (e.g., `/dev/ttyUSB0`)
-   - Optionally calibrate `FOCAL_LENGTH_PX` for accurate distance estimation
+   # Optional: ensure your SD card root partition is fully expanded to 16GB
+   sudo raspi-config
+   # Navigate to: Advanced Options -> Expand Filesystem -> Finish & Reboot
+   ```
+
+2. **Install lightweight dependencies (< 60 MB total)**:
+   ```bash
+   # Install hardware-optimized OpenCV and NumPy from Raspberry Pi OS apt repository
+   sudo apt update
+   sudo apt install -y python3-opencv python3-numpy python3-pip
+
+   # Install the ultra-lightweight TFLite runtime (~3MB)
+   cd rasberrypi_host/vision
+   pip3 install -r requirements.txt --no-cache-dir
+   ```
+
+3. **Configure** `rasberrypi_host/robot_main_1.py`:
+   - Set `SERIAL_PORT` to your ESP32 serial device (e.g., `/dev/ttyUSB0` or `/dev/ttyACM0`)
+   - The system automatically loads `models/detect.tflite` (4MB SSD MobileNet) with zero PyTorch dependencies.
+   - *(Desktop GPU users with ample storage can install `requirements-desktop.txt` to use PyTorch YOLO models).*
 
 ---
 
@@ -430,8 +441,7 @@ All firmware tuning parameters are in [`esp32_firmware/src/config.h`](esp32_firm
 | `DEFAULT_DRIVE_SPEED` | `200` | Default PWM when speed not specified (0–255) |
 | `DEFAULT_TURN_SPEED` | `180` | PWM for single-wheel pivot turns |
 | `PWM_FREQUENCY` | `20000` Hz | Ultrasonic PWM frequency (eliminates motor whine) |
-| `ENCODER_PPR` | `11` | Encoder pulses per motor shaft revolution |
-| `MOTOR_GEAR_RATIO` | `30` | Gearbox reduction (30:1) |
+| `WHEEL_PULSES_PER_REV` | `330.0` | Pulses per full revolution (turn) of the wheel |
 | `SYNC_KP` | `0.5` | Straight-line proportional sync gain |
 | `MAX_SYNC_TRIM_PWM` | `40` | Maximum correction applied per wheel (±40 PWM) |
 | `WATCHDOG_TIMEOUT_MS` | `350` ms | Auto-stop if no command received within this window |

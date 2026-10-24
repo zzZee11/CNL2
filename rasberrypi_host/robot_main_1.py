@@ -283,11 +283,18 @@ def build_vision(link):
     try:
         from config import Config
         from vision_bridge import VisionBridge, make_target_fn, make_stop_fn
+        models_dir = vision_dir / "models"
+        # Prefer lightweight detect.tflite on Raspberry Pi (runs at 15-25 FPS with ~3MB runtime)
+        model_file = (
+            models_dir / "detect.tflite"
+            if (models_dir / "detect.tflite").is_file()
+            else models_dir / "yolo26n.pt"
+        )
         cfg = replace(
             Config(),
-            model_path=vision_dir / "models" / "yolo26n.pt",   # yolo26n-pose.pt is not in the repo
+            model_path=model_file,
             debug_view=False,                                  # no window on the headless Pi
-            inference_threads=2,                               # his main.py default; a Pi has few cores
+            inference_threads=2,                               # optimal for Pi 4B cores
             focal_length_px=FOCAL_LENGTH_PX,
             assumed_person_height_m=PERSON_HEIGHT_M if FOCAL_LENGTH_PX else None,
         )
