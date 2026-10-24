@@ -229,7 +229,8 @@ class GridNavigator:
 
         # Dynamic obstacle mapping from distance sensors
         map_updated = False
-        for i in range(3):
+        num_sensors = min(len(tof), len(SENSOR_ANGLES))
+        for i in range(num_sensors):
             if tof[i] < 2.0:
                 a = theta + SENSOR_ANGLES[i]
                 ox = pos[0] + tof[i] * math.cos(a)
@@ -280,10 +281,12 @@ class MasterStateMachine:
         # Communication
         self.serial_mgr = SerialManager(port=port, baudrate=baudrate)
 
-        # Keyboard Tracking
+        # Keyboard Tracking & SSH Adaptations
+        self.is_ssh = bool(os.environ.get("SSH_CLIENT") or os.environ.get("SSH_TTY") or not os.environ.get("DISPLAY"))
+        self.key_decay_s = 0.60 if self.is_ssh else 0.45
+        self.cruise_mode = False  # Toggle between Momentary (hold) and Cruise (latched) mode
         self.active_keys: Set[str] = set()
         self.key_last_seen: Dict[str, float] = {}
-        self.key_decay_s = 0.45
         self.last_wasd_cmd = "X"
 
         # Autonomous Subsystems
@@ -396,17 +399,23 @@ class MasterStateMachine:
         self.key_last_seen[char] = now
 
         # Mode switching hotkeys
-        if char == "t" or char == "1":
+        if char in ("t", "1"):
             self.set_mode(MasterState.TELEOP)
             return
-        elif char == "f" or char == "2":
+        elif char in ("f", "2"):
             self.set_mode(MasterState.HUMAN_FOLLOW)
             return
-        elif char == "n" or char == "3":
+        elif char in ("n", "3"):
             self.set_mode(MasterState.GRID_NAV)
             return
-        elif char == "i" or char == "0":
+        elif char in ("i", "0"):
             self.set_mode(MasterState.IDLE)
+            return
+        elif char == "c":
+            # Toggle between Momentary (hold) and Cruise (latched) mode
+            self.cruise_mode = not self.cruise_mode
+            if not self.cruise_mode:
+                self.active_keys.clear()
             return
         elif char in ("+", "="):
             self.speed = min(255, self.speed + 15)
@@ -418,9 +427,37 @@ class MasterStateMachine:
             self.running = False
             return
 
-        # WASD keys
+        # Cruise control / Latched logic (ideal for SSH)
+        if self.cruise_mode:
+            if char in (" ", "x"):
+                self.active_keys.clear()
+                if char == " ":
+                    self.active_keys.add(" ")
+            elif char == "w":
+                self.active_keys = {"w"}
+            elif char == "s":
+                self.active_keys = {"s"}
+            elif char == "a":
+                if "w" in self.active_keys:
+                    self.active_keys = {"w", "a"}
+                elif "s" in self.active_keys:
+                    self.active_keys = {"s", "a"}
+                else:
+                    self.active_keys = {"a"}
+            elif char == "d":
+                if "w" in self.active_keys:
+                    self.active_keys = {"w", "d"}
+                elif "s" in self.active_keys:
+                    self.active_keys = {"s", "d"}
+                else:
+                    self.active_keys = {"d"}
+            return
+
+        # Momentary hold logic
         if char in ("w", "s", "a", "d", " "):
             self.active_keys.add(char)
+        elif char == "x":
+            self.active_keys.clear()
 
     def _terminal_raw_loop(self):
         import select
@@ -438,12 +475,13 @@ class MasterStateMachine:
                     if chars:
                         self._handle_char_press(chars.lower())
 
-                # Clean up decayed keys (Linux TTY key-up emulation)
-                now = time.time()
-                decayed = [k for k, last_t in self.key_last_seen.items() if now - last_t > self.key_decay_s]
-                for k in decayed:
-                    self.active_keys.discard(k)
-                    del self.key_last_seen[k]
+                # Clean up decayed keys in momentary mode (Linux TTY key-up emulation)
+                if not self.cruise_mode:
+                    now = time.time()
+                    decayed = [k for k, last_t in self.key_last_seen.items() if now - last_t > self.key_decay_s]
+                    for k in decayed:
+                        self.active_keys.discard(k)
+                        del self.key_last_seen[k]
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
@@ -551,16 +589,29 @@ class MasterStateMachine:
             Layout(name="right_table", ratio=1),
         )
 
+        is_connected = self.serial_mgr.is_connected()
+        if not is_connected:
+            motor_status = "[dim red]DISCONNECTED[/]"
+            wdg_display = "[bold red]OFFLINE (NO LINK)[/]"
+        elif tele.is_watchdog_tripped:
+            motor_status = f"[bold yellow]{tele.state}[/]"
+            wdg_display = "[bold red]TRIPPED (TIMEOUT)[/]"
+        elif tele.is_healthy:
+            motor_status = f"[bold green]{tele.state}[/]"
+            wdg_display = "[bold green]HEALTHY (OK)[/]"
+        else:
+            motor_status = f"[dim]{tele.state}[/]"
+            wdg_display = f"[yellow]{tele.flags}[/]"
+
         # Odometry Table
         enc_table = Table(title="[bold yellow]ESP32 Wheel Odometry[/]", expand=True)
         enc_table.add_column("Wheel", justify="center")
-        enc_table.add_column("Ticks", justify="center")
+        enc_table.add_column("Encoder Ticks", justify="center")
         enc_table.add_column("Speed (RPM)", justify="center")
-        enc_table.add_column("Watchdog", justify="center")
+        enc_table.add_column("Motor Status", justify="center")
 
-        wdg_str = "[bold red]TRIPPED[/]" if tele.is_watchdog_tripped else "[bold green]HEALTHY[/]"
-        enc_table.add_row("Left Wheel", f"{tele.ticks_left:,}", f"{tele.rpm_left:+.1f}", wdg_str)
-        enc_table.add_row("Right Wheel", f"{tele.ticks_right:,}", f"{tele.rpm_right:+.1f}", f"[dim]{tele.state}[/]")
+        enc_table.add_row("Left Wheel (M1)", f"{tele.ticks_left:,}", f"{tele.rpm_left:+.1f}", motor_status)
+        enc_table.add_row("Right Wheel (M2)", f"{tele.ticks_right:,}", f"{tele.rpm_right:+.1f}", motor_status)
         layout["tables"]["left_table"].update(enc_table)
 
         # Command & Navigation Table
@@ -569,8 +620,11 @@ class MasterStateMachine:
         nav_table.add_column("Current Value", justify="center")
 
         pressed_str = ", ".join(sorted(self.active_keys)).upper() if self.active_keys else "NONE"
+        drive_mode_str = "[bold cyan]CRUISE (LATCHED)[/]" if self.cruise_mode else "[bold green]MOMENTARY (HOLD)[/]"
+        nav_table.add_row("Drive Input Mode", drive_mode_str)
         nav_table.add_row("Active Held Keys", f"[bold white]{pressed_str}[/]")
-        nav_table.add_row("Last WASD Command", f"[bold green]{self.last_wasd_cmd}[/]")
+        nav_table.add_row("Last Drive Command", f"[bold green]{self.last_wasd_cmd}[/]")
+        nav_table.add_row("Safety Watchdog", wdg_display)
         nav_table.add_row("Vision Bridge", "[green]READY[/]" if HAVE_VISION else "[dim]DISABLED[/]")
         nav_table.add_row("A* Grid Planner", "[green]READY[/]" if HAVE_ASTAR else "[dim]DISABLED[/]")
         layout["tables"]["right_table"].update(nav_table)
@@ -578,10 +632,11 @@ class MasterStateMachine:
         # Footer Shortcuts
         footer_text = Text.from_markup(
             "[bold white]Shortcuts:[/] "
-            "[bold green][T/1][/] Teleop (WASD)  "
-            "[bold cyan][F/2][/] Human Follow  "
-            "[bold magenta][N/3][/] Grid Nav  "
+            "[bold green][T/1][/] Teleop  "
+            "[bold cyan][F/2][/] Follow  "
+            "[bold magenta][N/3][/] Nav  "
             "[bold yellow][I/0][/] Idle  "
+            "[bold magenta][C][/] Cruise/Hold  "
             "[bold red][Space][/] Brake  "
             "[bold blue][+/-][/] Speed  "
             "[bold red][Q][/] Quit"
@@ -597,12 +652,16 @@ class MasterStateMachine:
 
 def main():
     parser = argparse.ArgumentParser(description="CNL2 Master State Machine Controller")
-    parser.add_argument("--port", type=str, default=None, help="Serial device port (e.g. /dev/ttyACM0)")
+    parser.add_argument("--port", type=str, default=None, help="Serial device port (e.g. /dev/ttyACM0 or /dev/serial0)")
     parser.add_argument("--baud", type=int, default=115200, help="Baud rate (default 115200)")
     parser.add_argument("--speed", type=int, default=200, help="Default motor speed PWM (50 - 255)")
+    parser.add_argument("--ssh", action="store_true", help="Force SSH-optimized low-bandwidth terminal mode")
     args = parser.parse_args()
 
     master = MasterStateMachine(port=args.port, baudrate=args.baud, default_speed=args.speed)
+    if args.ssh:
+        master.is_ssh = True
+        master.key_decay_s = 0.60
 
     # 1. Connect Serial Link to ESP32
     console.print("[cyan]Connecting to ESP32-S3 microcontroller...[/]")
@@ -615,13 +674,16 @@ def main():
     # 3. Start Keyboard Listener
     master.start_input()
 
+    # Refresh rate: 10 Hz over SSH (smooth, zero terminal flicker, low bandwidth) or 20 Hz locally
+    refresh_rate = 10 if master.is_ssh else 20
+
     # 4. Master State Machine Execution Loop with Live Dashboard
     try:
-        with Live(master.render_dashboard(), console=console, screen=True, refresh_per_second=20) as live:
+        with Live(master.render_dashboard(), console=console, screen=True, refresh_per_second=refresh_rate) as live:
             while master.running:
                 master.tick()
                 live.update(master.render_dashboard())
-                time.sleep(0.05)  # 20 Hz tick
+                time.sleep(1.0 / refresh_rate)
     except KeyboardInterrupt:
         pass
     finally:
@@ -630,6 +692,13 @@ def main():
         time.sleep(0.1)
         master.serial_mgr.set_drive_command("X", 0)
         time.sleep(0.1)
+        master.serial_mgr.close()
+        if master.vision_bridge:
+            master.vision_bridge.stop()
+        # Restore cursor visibility in terminal
+        sys.stdout.write("\033[?25h\n")
+        sys.stdout.flush()
+        console.print("[bold green]Master State Machine terminated cleanly.[/]")
         master.serial_mgr.close()
         if master.vision_bridge:
             master.vision_bridge.stop()

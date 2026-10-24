@@ -39,9 +39,15 @@ class SerialManager:
 
     @staticmethod
     def list_available_ports() -> List[str]:
-        """Returns list of device names for connected USB serial ports."""
+        """Returns list of device names for connected USB serial ports and Raspberry Pi UARTs."""
+        import os
         ports = serial.tools.list_ports.comports()
-        return [p.device for p in ports]
+        device_list = [p.device for p in ports]
+        # Check standard Raspberry Pi GPIO UART & USB symlinks if present
+        for extra in ("/dev/ttyACM0", "/dev/ttyACM1", "/dev/ttyUSB0", "/dev/ttyUSB1", "/dev/serial0"):
+            if os.path.exists(extra) and extra not in device_list:
+                device_list.append(extra)
+        return device_list
 
     def connect(self) -> bool:
         """Connect to the specified port or auto-detect an available port."""

@@ -136,7 +136,8 @@ def calculate_apf(current_pos, waypoint, tof_readings, current_theta):
     # Repulsive Vectors (Real-time ToF vectors)
     f_rep = np.array([0.0, 0.0])
     
-    for i in range(3):
+    num_sensors = min(len(tof_readings), len(SENSOR_ANGLES))
+    for i in range(num_sensors):
         distance = tof_readings[i]
         # Ensure distance is valid (> 0.01) to prevent ZeroDivisionError
         if 0.01 < distance < SAFE_DIST:
