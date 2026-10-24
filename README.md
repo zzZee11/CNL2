@@ -208,35 +208,38 @@ CNL2/
 │   │   └── pid_controller.h
 │   └── tests/                         # Isolated standalone test sketches
 │       ├── distance_sensor_test.cpp
-│       └── motor_driver_test.cpp
+│       ├── motor_driver_test.cpp
+│       └── 3_distance_sensors/        # Standalone 3x VL53L0X distance sensor test sketch
+│           └── 3_distance_sensors.ino
 │
-├── teleop_host/                       # Host-side teleoperation (Python)
+├── teleop_host/                       # Standalone teleoperation & serial drivers (Python)
 │   ├── README.md
 │   ├── requirements.txt               # pyserial, pynput, rich
-│   ├── teleop_controller.py           # Keyboard capture, chord resolution, dashboard
-│   ├── serial_interface.py            # Threaded serial TX/RX manager
+│   ├── teleop_controller.py           # Standalone keyboard teleop controller
+│   ├── serial_interface.py            # Threaded serial TX/RX manager & heartbeat
 │   └── telemetry_model.py             # TELE: packet data model & parser
 │
-├── rasberrypi_host/                   # Raspberry Pi autonomous pipeline
-│   ├── robot_main_1.py                # State machine: nav, follow, serial link
+├── rasberrypi_host/                   # Unified Autonomous & Teleop Robot Pipeline
+│   ├── master_controller.py           # ★ Central Master State Machine Controller (WASD + Nav + Follow)
+│   ├── robot_main.py                  # Primary entry point launching Master State Machine
+│   ├── robot_main_1.py                # Backward-compatible entry point
 │   ├── a_search_main.py               # A* grid path planning & APF obstacle avoidance
 │   ├── vision_bridge.py               # Bridge between vision pipeline & robot controller
 │   └── vision/                        # Computer vision subsystem
 │       ├── config.py                  #   YOLO, camera, gait, & safety parameters
 │       ├── main.py                    #   Vision pipeline entry point
-│       ├── detector.py                #   YOLO inference wrapper
+│       ├── detector.py                #   Multi-backend detector (TFLite/ONNX/PyTorch)
 │       ├── tracker.py                 #   Multi-object tracker
 │       ├── target_selector.py         #   Target person selection logic
 │       ├── vision.py                  #   Full vision pipeline orchestrator
-│       ├── motion.py                  #   Gait/stance classification
-│       ├── requirements.txt           #   ultralytics, torch, opencv, numpy
+│       ├── motion.py                  #   Gait/stance classification & stop detection
+│       ├── requirements.txt           #   Lightweight edge requirements (tflite-runtime)
+│       ├── requirements-desktop.txt   #   Desktop GPU requirements (ultralytics, torch)
 │       └── models/                    #   Pre-trained model weights
 │           ├── yolo26n.pt
 │           ├── yolo26n-pose.pt
 │           ├── detect.tflite
 │           └── labelmap.txt
-│
-└── 3_distance_sensors.ino             # Standalone 3x VL53L0X distance sensor test sketch
 ```
 
 ---
@@ -357,49 +360,41 @@ cd CNL2
 
 ## Usage
 
-### Teleoperation Mode
+### Master State Machine Controller (Recommended)
 
-1. **Connect** the ESP32-S3 to your computer via USB cable
-2. **Launch** the teleoperation controller:
-   ```bash
-   cd teleop_host
-   python3 teleop_controller.py
-   ```
-   The script will auto-detect the serial port. To specify manually:
-   ```bash
-   python3 teleop_controller.py --port /dev/ttyACM0 --speed 220
-   ```
-
-3. **Drive the robot** using keyboard controls:
-
-   | Key(s) | Action | Description |
-   |---|---|---|
-   | `W` | Forward | Both wheels forward, encoder-synced straight line |
-   | `S` | Reverse | Both wheels reverse, encoder-synced straight line |
-   | `A` | Pivot Left | Only left wheel spins (car pivots on right wheel) |
-   | `D` | Pivot Right | Only right wheel spins (car pivots on left wheel) |
-   | `W` + `A` | Forward-Left Arc | Right wheel full speed, left wheel ⅓ speed |
-   | `W` + `D` | Forward-Right Arc | Left wheel full speed, right wheel ⅓ speed |
-   | `S` + `A` | Reverse-Left Arc | Reverse arc turning left |
-   | `S` + `D` | Reverse-Right Arc | Reverse arc turning right |
-   | `Space` | Active Brake | Electronic brake — locks both wheels instantly |
-   | `+` / `-` | Speed Up / Down | Adjust PWM between 50 and 255 |
-   | `Q` | Quit | Stop motors and exit |
-
-4. **Read the dashboard**: The terminal displays a live updating panel with:
-   - Serial connection status and packet rate
-   - Current drive command and target PWM
-   - Real-time RPM and encoder ticks for each wheel
-   - Watchdog health (OK / TRIPPED)
-
-### Vision Following Mode (Raspberry Pi)
+Run the unified Master State Machine on your Raspberry Pi (or PC connected via USB):
 
 ```bash
 cd rasberrypi_host
-python3 robot_main_1.py
+python3 robot_main.py
 ```
+*(Or specify port and speed: `python3 robot_main.py --port /dev/ttyACM0 --speed 220`)*
 
-The robot will use camera input to detect, track, and follow a person using YOLO pose estimation and Artificial Potential Field steering.
+The system launches an interactive live Rich dashboard. All driving commands route directly through the Master State Machine:
+
+#### Mode Switching & Shortcuts:
+| Key | Mode / Action | Description |
+|---|---|---|
+| `T` or `1` | **TELEOP Mode** | Direct WASD manual keyboard control |
+| `F` or `2` | **HUMAN_FOLLOW Mode** | Autonomous camera tracking & following |
+| `N` or `3` | **GRID_NAV Mode** | Autonomous A* path planning & obstacle avoidance |
+| `I` or `0` | **IDLE Mode** | Stop motors and enter safe standby |
+| `Space` | **ACTIVE BRAKE** | Electronic brake — locks both wheels instantly |
+| `+` / `-` | **Throttle Speed** | Increase / decrease drive PWM between 50 and 255 |
+| `Q` | **Quit** | Stop motors and exit cleanly |
+
+#### WASD Key Controls (Active in TELEOP Mode):
+| Key(s) | Action | Kinematics |
+|---|---|---|
+| `W` | Forward | Both wheels forward, encoder-synced straight line |
+| `S` | Reverse | Both wheels reverse, encoder-synced straight line |
+| `A` | Pivot Left | Only left wheel spins (car pivots on right wheel) |
+| `D` | Pivot Right | Only right wheel spins (car pivots on left wheel) |
+| `W` + `A` | Forward-Left Arc | Right wheel full speed, left wheel ⅓ speed |
+| `W` + `D` | Forward-Right Arc | Left wheel full speed, right wheel ⅓ speed |
+| `S` + `A` | Reverse-Left Arc | Reverse arc turning left |
+| `S` + `D` | Reverse-Right Arc | Reverse arc turning right |
+| `Space` | Active Brake | Electronic brake — locks both wheels instantly |
 
 ---
 
@@ -408,11 +403,12 @@ The robot will use camera input to detect, track, and follow a person using YOLO
 ### Host → ESP32 (Command Packets)
 ```
 CMD:<DIRECTION>,<SPEED>\n
+CMD:LR,<LEFT_PWM>,<RIGHT_PWM>\n
 ```
-| Field | Values | Example |
+| Format | Description | Example |
 |---|---|---|
-| DIRECTION | `W`, `S`, `A`, `D`, `WA`, `WD`, `SA`, `SD`, `B`, `X` | `WA` |
-| SPEED | `0` – `255` (PWM duty cycle) | `200` |
+| `CMD:<DIR>,<SPEED>` | Directional drive & arc commands | `CMD:W,200\n`, `CMD:WA,200\n`, `CMD:B,0\n` |
+| `CMD:LR,<L>,<R>` | Differential drive from state machine (-255 to +255) | `CMD:LR,180,180\n`, `CMD:LR,140,210\n` |
 
 Example: `CMD:WA,200\n` → Forward-left arc at PWM 200
 

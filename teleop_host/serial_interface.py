@@ -28,7 +28,7 @@ class SerialManager:
         self._lock = threading.Lock()
         self._latest_telemetry: TelemetryData = TelemetryData()
         self._current_cmd: str = "X"
-        self._current_speed: int = 0
+        self._current_speed: Optional[int] = 0
         self._force_send = threading.Event()
 
         # Telemetry statistics
@@ -93,14 +93,29 @@ class SerialManager:
             self._current_speed = speed if cmd_char not in ("X", "B") else 0
         self._force_send.set()
 
+    def set_differential_drive(self, pwmL: int, pwmR: int) -> None:
+        """
+        Set independent Left and Right motor PWM (-255 to +255)
+        for autonomous navigation modes (A* APF / Human Follower).
+        """
+        clamped_l = max(-255, min(255, int(pwmL)))
+        clamped_r = max(-255, min(255, int(pwmR)))
+        with self._lock:
+            self._current_cmd = f"LR,{clamped_l},{clamped_r}"
+            self._current_speed = None
+        self._force_send.set()
+
     def get_telemetry(self) -> TelemetryData:
         with self._lock:
             return self._latest_telemetry
 
-    def _send_packet(self, cmd_char: str, speed: int) -> None:
+    def _send_packet(self, cmd_char: str, speed: Optional[int]) -> None:
         if not self.is_connected() or not self._serial:
             return
-        packet = f"CMD:{cmd_char},{speed}\n".encode("ascii")
+        if speed is not None:
+            packet = f"CMD:{cmd_char},{speed}\n".encode("ascii")
+        else:
+            packet = f"CMD:{cmd_char}\n".encode("ascii")
         try:
             self._serial.write(packet)
             self._serial.flush()
@@ -171,4 +186,7 @@ class SerialManager:
             self._rx_thread.join(timeout=0.5)
         if self._tx_thread and self._tx_thread.is_alive():
             self._tx_thread.join(timeout=0.5)
+
+    def close(self) -> None:
+        self.disconnect()
 

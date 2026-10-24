@@ -324,4 +324,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    from master_controller import main as master_main
+    master_main()

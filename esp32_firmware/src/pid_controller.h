@@ -10,6 +10,7 @@ public:
 
     void init();
     void setCommand(DriveState state, uint8_t speed);
+    void setRawMotors(int16_t leftPwm, int16_t rightPwm);
     void update(unsigned long nowMs, float rpmL, float rpmR, int64_t ticksL, int64_t ticksR);
     void reset();
 

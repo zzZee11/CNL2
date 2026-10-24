@@ -59,7 +59,7 @@ def mark_obstacle(grid, world_x, world_y):
             if 0 <= nx < GRID_DIM and 0 <= ny < GRID_DIM:
                 # Circular inflation math
                 if math.hypot(i, j) <= CELLS_TO_INFLATE:
-                    grid[nx][ny] = 1
+                    grid[nx, ny] = 1
 
 # ==========================================
 # 2. GLOBAL PLANNER (Grid A*)
@@ -138,7 +138,8 @@ def calculate_apf(current_pos, waypoint, tof_readings, current_theta):
     
     for i in range(3):
         distance = tof_readings[i]
-        if distance < SAFE_DIST:
+        # Ensure distance is valid (> 0.01) to prevent ZeroDivisionError
+        if 0.01 < distance < SAFE_DIST:
             magnitude = K_REP * ((1.0 / distance) - (1.0 / SAFE_DIST)) / (distance ** 2)
             push_angle = current_theta + SENSOR_ANGLES[i] + math.pi
             f_rep[0] += magnitude * math.cos(push_angle)
@@ -148,10 +149,14 @@ def calculate_apf(current_pos, waypoint, tof_readings, current_theta):
 
 def calculate_kinematics(f_total, current_theta):
     """Translates vector into left/right wheel speeds."""
+    v = min(np.linalg.norm(f_total), MAX_SPEED)
+    
+    # Prevent atan2(0,0) or divide-by-zero if total force is near zero
+    if v < 0.01:
+        return 0.0, 0.0
+
     desired_theta = math.atan2(f_total[1], f_total[0])
     heading_error = math.atan2(math.sin(desired_theta - current_theta), math.cos(desired_theta - current_theta))
-    
-    v = min(np.linalg.norm(f_total), MAX_SPEED)
     omega = 2.0 * heading_error 
     
     v_left = v - (omega * WHEEL_BASE / 2.0)

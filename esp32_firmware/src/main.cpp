@@ -55,6 +55,17 @@ void processCommand(const char* cmdStr) {
     lastCommandTime = millis();
     watchdogTripped = false;
 
+    // Direct differential drive command from state machine: CMD:LR,<leftPwm>,<rightPwm>
+    if (strcmp(dirCode, "LR") == 0 && commaPtr != nullptr) {
+        int pwmL = atoi(commaPtr + 1);
+        const char* secondComma = strchr(commaPtr + 1, ',');
+        int pwmR = (secondComma != nullptr) ? atoi(secondComma + 1) : pwmL;
+        pwmL = constrain(pwmL, -255, 255);
+        pwmR = constrain(pwmR, -255, 255);
+        controller.setRawMotors((int16_t)pwmL, (int16_t)pwmR);
+        return;
+    }
+
     // Map command codes to controller states
     if (strcmp(dirCode, "WA") == 0) {
         controller.setCommand(STATE_FWD_LEFT, speed);

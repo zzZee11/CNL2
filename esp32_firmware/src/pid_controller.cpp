@@ -25,6 +25,22 @@ void RobotController::reset() {
     _motors.stop();
 }
 
+void RobotController::setRawMotors(int16_t leftPwm, int16_t rightPwm) {
+    _lastPwmL = leftPwm;
+    _lastPwmR = rightPwm;
+    _syncActive = false;
+    if (leftPwm == 0 && rightPwm == 0) {
+        _targetState = STATE_STOP;
+    } else if (leftPwm > 0 && rightPwm > 0) {
+        _targetState = STATE_FWD;
+    } else if (leftPwm < 0 && rightPwm < 0) {
+        _targetState = STATE_REV;
+    } else {
+        _targetState = (leftPwm < rightPwm) ? STATE_LEFT : STATE_RIGHT;
+    }
+    _motors.setRawMotors(leftPwm, rightPwm);
+}
+
 void RobotController::setCommand(DriveState state, uint8_t speed) {
     _targetState = state;
     _targetSpeed = speed;
