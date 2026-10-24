@@ -107,13 +107,17 @@ class SerialManager:
     def set_drive_command(self, cmd_char: str, speed: int = 200) -> None:
         """
         Update current drive command ('W', 'S', 'A', 'D', 'X', 'B').
-        Triggers an immediate packet transmission.
+        Triggers an immediate packet transmission only when the command changes,
+        allowing heartbeats to stream smoothly at fixed intervals without bursts.
         """
         cmd_char = cmd_char.upper()
+        target_speed = speed if cmd_char not in ("X", "B") else 0
         with self._lock:
+            changed = (self._current_cmd != cmd_char or self._current_speed != target_speed)
             self._current_cmd = cmd_char
-            self._current_speed = speed if cmd_char not in ("X", "B") else 0
-        self._force_send.set()
+            self._current_speed = target_speed
+        if changed:
+            self._force_send.set()
 
     def set_differential_drive(self, pwmL: int, pwmR: int) -> None:
         """
@@ -122,10 +126,13 @@ class SerialManager:
         """
         clamped_l = max(-255, min(255, int(pwmL)))
         clamped_r = max(-255, min(255, int(pwmR)))
+        cmd_str = f"LR,{clamped_l},{clamped_r}"
         with self._lock:
-            self._current_cmd = f"LR,{clamped_l},{clamped_r}"
+            changed = (self._current_cmd != cmd_str or self._current_speed is not None)
+            self._current_cmd = cmd_str
             self._current_speed = None
-        self._force_send.set()
+        if changed:
+            self._force_send.set()
 
     def get_telemetry(self) -> TelemetryData:
         with self._lock:

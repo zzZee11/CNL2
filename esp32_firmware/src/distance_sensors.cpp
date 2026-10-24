@@ -23,7 +23,7 @@ bool DistanceSensors::initCenterSensor(VL53L0X& sensor, uint8_t newAddress, cons
 
     // Assign custom address to free 0x29 for subsequent sensors
     sensor.setAddress(newAddress);
-    sensor.setTimeout(100);
+    sensor.setTimeout(25);
     sensor.startContinuous(50);
 
     Serial.printf("# [ToF] %s (no XSHUT) re-addressed 0x29 -> 0x%02X OK\n", name, newAddress);
@@ -44,7 +44,7 @@ bool DistanceSensors::initSensorWithXshut(VL53L0X& sensor, int xshutPin, uint8_t
 
     // Set custom I2C address
     sensor.setAddress(newAddress);
-    sensor.setTimeout(100);
+    sensor.setTimeout(25);
     sensor.startContinuous(50);
 
     Serial.printf("# [ToF] %s initialized at 0x%02X\n", name, newAddress);

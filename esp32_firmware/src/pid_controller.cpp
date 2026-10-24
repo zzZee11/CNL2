@@ -42,6 +42,12 @@ void RobotController::setRawMotors(int16_t leftPwm, int16_t rightPwm) {
 }
 
 void RobotController::setCommand(DriveState state, uint8_t speed) {
+    // If state and speed haven't changed, ignore redundant heartbeat packet to avoid
+    // resetting encoder sync loop baseline and hammering motor PWM registers
+    if (_targetState == state && _targetSpeed == speed) {
+        return;
+    }
+
     _targetState = state;
     _targetSpeed = speed;
     _motors.setState(state);
@@ -150,6 +156,10 @@ void RobotController::update(unsigned long nowMs, float rpmL, float rpmR, int64_
         _lastPwmR = 0;
         return;
     }
+
+#if !ENABLE_ENCODER_SYNC
+    return;
+#endif
 
     // Straight-line encoder synchronization only runs during pure FWD or REV
     if (_targetState != STATE_FWD && _targetState != STATE_REV) {

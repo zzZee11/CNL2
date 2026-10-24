@@ -283,7 +283,7 @@ class MasterStateMachine:
 
         # Keyboard Tracking & SSH Adaptations
         self.is_ssh = bool(os.environ.get("SSH_CLIENT") or os.environ.get("SSH_TTY") or not os.environ.get("DISPLAY"))
-        self.key_decay_s = 0.60 if self.is_ssh else 0.45
+        self.key_decay_s = 0.85 if self.is_ssh else 0.70
         self.cruise_mode = False  # Toggle between Momentary (hold) and Cruise (latched) mode
         self.active_keys: Set[str] = set()
         self.key_last_seen: Dict[str, float] = {}
@@ -698,7 +698,7 @@ def main():
     master = MasterStateMachine(port=args.port, baudrate=args.baud, default_speed=args.speed)
     if args.ssh:
         master.is_ssh = True
-        master.key_decay_s = 0.60
+        master.key_decay_s = 0.85
 
     # 1. Connect Serial Link to ESP32
     console.print("[cyan]Connecting to ESP32-S3 microcontroller...[/]")

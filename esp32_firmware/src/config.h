@@ -99,6 +99,9 @@
 // ==============================================================================
 // Closed-Loop Synchronization Parameters
 // ==============================================================================
+// Set to false for silky-smooth open-loop PWM teleoperation.
+// Set to true only after verifying both wheel encoders count cleanly and match direction.
+#define ENABLE_ENCODER_SYNC     false
 #define SYNC_LOOP_INTERVAL_MS   30      // Loop interval (~33 Hz)
 
 // Straight-line encoder synchronization gain:
@@ -111,7 +114,7 @@
 // ==============================================================================
 // Safety Watchdog & Telemetry Rates
 // ==============================================================================
-#define WATCHDOG_TIMEOUT_MS     350     // Auto-stop motors if no serial command in 350 ms
+#define WATCHDOG_TIMEOUT_MS     750     // Auto-stop motors if no serial command in 750 ms (tolerant of SSH/serial jitter)
 #define TELEMETRY_INTERVAL_MS   50      // 20 Hz telemetry stream
 #define RPM_CALC_INTERVAL_MS    50      // Rolling window for RPM calculations
 #define SERIAL_BAUD_RATE        115200  // USB Serial baud rate
