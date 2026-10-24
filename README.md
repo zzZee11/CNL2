@@ -236,8 +236,7 @@ CNL2/
 │           ├── detect.tflite
 │           └── labelmap.txt
 │
-├── a_search_main.py                   # A* algorithm implementation
-└── test.py                            # Miscellaneous test script
+└── 3_distance_sensors.ino             # Standalone 3x VL53L0X distance sensor test sketch
 ```
 
 ---
