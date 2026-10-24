@@ -3,11 +3,10 @@
 
 // ==================================================
 // I2C CONFIGURATION
-// (Note: Pins 4-9 are reserved for motors, 10-13 for encoders, 17-18 for Pi UART)
 // ==================================================
 
-#define SDA_PIN 15
-#define SCL_PIN 16
+#define SDA_PIN 11  // SDL / SDA
+#define SCL_PIN 10  // SCL
 
 // ==================================================
 // XSHUT PINS (Only 2 pins: Middle sensor has NO XSHUT)

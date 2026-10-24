@@ -6,25 +6,25 @@
 // Hardware Pinout Configuration (ESP32-S3)
 // ==============================================================================
 
-// L298N Motor Driver Pins (Swapped Left <-> Right)
-// Left Motor (Physical Channel B)
-#define PIN_MOTOR_L_ENA     9   // PWM speed control (LEDC)
-#define PIN_MOTOR_L_IN1     7   // Direction input 1
-#define PIN_MOTOR_L_IN2     8   // Direction input 2
+// L298N Motor Driver Pins
+// Left Motor (Channel A)
+#define PIN_MOTOR_L_ENA     9   // ENA (PWM)
+#define PIN_MOTOR_L_IN1     8   // IN1 (Direction)
+#define PIN_MOTOR_L_IN2     16  // IN2 (Direction)
 
-// Right Motor (Physical Channel A)
-#define PIN_MOTOR_R_ENB     4   // PWM speed control (LEDC)
-#define PIN_MOTOR_R_IN3     5   // Direction input 3
-#define PIN_MOTOR_R_IN4     6   // Direction input 4
+// Right Motor (Channel B)
+#define PIN_MOTOR_R_ENB     6   // ENB (PWM)
+#define PIN_MOTOR_R_IN3     15  // IN3 (Direction)
+#define PIN_MOTOR_R_IN4     7   // IN4 (Direction)
 
-// Quadrature Encoders (Swapped Left <-> Right)
+// Quadrature Encoders
 // Left Wheel Encoder
-#define PIN_ENC_L_A         12  // Phase A (Interrupt)
-#define PIN_ENC_L_B         13  // Phase B (Direction)
+#define PIN_ENC_L_A         4   // Phase A / C1 (Interrupt)
+#define PIN_ENC_L_B         5   // Phase B / C2 (Direction)
 
 // Right Wheel Encoder
-#define PIN_ENC_R_A         10  // Phase A (Interrupt)
-#define PIN_ENC_R_B         11  // Phase B (Direction)
+#define PIN_ENC_R_A         12  // Phase A / C1 (Interrupt)
+#define PIN_ENC_R_B         13  // Phase B / C2 (Direction)
 
 // ==============================================================================
 // Hardware UART for Raspberry Pi 4B GPIO Serial Connection
@@ -47,8 +47,8 @@
 //   - Right Sensor (S3) : XSHUT connected to PIN_XSHUT_RIGHT
 #define USE_VL53L0X_SENSORS     true
 
-#define PIN_I2C_SDA             15  // ESP32 I2C SDA (configurable to any free GPIO)
-#define PIN_I2C_SCL             16  // ESP32 I2C SCL (configurable to any free GPIO)
+#define PIN_I2C_SDA             11  // ESP32 I2C SDA / SDL (GPIO 11)
+#define PIN_I2C_SCL             10  // ESP32 I2C SCL (GPIO 10)
 
 // Only 2 XSHUT pins required (Center sensor has no XSHUT connected)
 #define PIN_XSHUT_LEFT          1   // Left sensor XSHUT (Sensor 1, +45 deg)

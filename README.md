@@ -151,11 +151,11 @@ A two-wheeled differential-drive robot car powered by an **ESP32-S3** microcontr
 | Signal | ESP32-S3 GPIO | L298N Pin | Description |
 |---|---|---|---|
 | Left Motor PWM | **GPIO 9** | ENA | Speed control (remove ENA jumper!) |
-| Left Motor Dir 1 | **GPIO 7** | IN1 | Forward: HIGH |
-| Left Motor Dir 2 | **GPIO 8** | IN2 | Forward: LOW |
-| Right Motor PWM | **GPIO 4** | ENB | Speed control (remove ENB jumper!) |
-| Right Motor Dir 1 | **GPIO 5** | IN3 | Forward: HIGH |
-| Right Motor Dir 2 | **GPIO 6** | IN4 | Forward: LOW |
+| Left Motor Dir 1 | **GPIO 8** | IN1 | Direction input 1 |
+| Left Motor Dir 2 | **GPIO 16** | IN2 | Direction input 2 |
+| Right Motor PWM | **GPIO 6** | ENB | Speed control (remove ENB jumper!) |
+| Right Motor Dir 1 | **GPIO 15** | IN3 | Direction input 3 |
+| Right Motor Dir 2 | **GPIO 7** | IN4 | Direction input 4 |
 
 > **⚠️ Important**: Remove the black jumper caps from **ENA** and **ENB** on the L298N board. These jumpers bypass PWM speed control and lock motors to full speed.
 
@@ -163,10 +163,10 @@ A two-wheeled differential-drive robot car powered by an **ESP32-S3** microcontr
 
 | Signal | ESP32-S3 GPIO | Encoder Wire | Description |
 |---|---|---|---|
-| Left Encoder Phase A | **GPIO 12** | Channel A (Yellow) | Interrupt trigger (RISING) |
-| Left Encoder Phase B | **GPIO 13** | Channel B (Green) | Direction sensing |
-| Right Encoder Phase A | **GPIO 10** | Channel A (Yellow) | Interrupt trigger (RISING) |
-| Right Encoder Phase B | **GPIO 11** | Channel B (Green) | Direction sensing |
+| Left Encoder Phase A (C1) | **GPIO 4** | Channel A (Yellow) | Interrupt trigger (RISING) |
+| Left Encoder Phase B (C2) | **GPIO 5** | Channel B (Green) | Direction sensing |
+| Right Encoder Phase A (C1) | **GPIO 12** | Channel A (Yellow) | Interrupt trigger (RISING) |
+| Right Encoder Phase B (C2) | **GPIO 13** | Channel B (Green) | Direction sensing |
 
 ### Power Connections
 
@@ -212,8 +212,8 @@ The robot car uses 3 laser ToF distance sensors for front collision avoidance an
 
 | Signal | ESP32-S3 GPIO | Sensor Pin | Description |
 |---|---|---|---|
-| I2C SDA | **GPIO 15** | SDA (shared) | Common I2C Data bus (can be changed to any free GPIO) |
-| I2C SCL | **GPIO 16** | SCL (shared) | Common I2C Clock bus (can be changed to any free GPIO) |
+| I2C SDA | **GPIO 11** | SDA / SDL (shared) | Common I2C Data bus |
+| I2C SCL | **GPIO 10** | SCL (shared) | Common I2C Clock bus |
 | Sensor Power | **3.3V / VIN** | VIN (shared) | 3.3V logic supply |
 | Ground | **GND** | GND (shared) | Common Ground |
 | Left XSHUT | **GPIO 1** | XSHUT (S1) | Software boot control (re-addressed to `0x30`) |
