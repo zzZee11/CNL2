@@ -3,18 +3,19 @@
 
 // ==================================================
 // I2C CONFIGURATION
+// (Note: Pins 4-9 are reserved for motors, 10-13 for encoders, 17-18 for Pi UART)
 // ==================================================
 
-#define SDA_PIN 10
-#define SCL_PIN 11
+#define SDA_PIN 15
+#define SCL_PIN 16
 
 // ==================================================
 // XSHUT PINS
 // ==================================================
 
-#define XSHUT_1 12
-#define XSHUT_2 13
-#define XSHUT_3 14
+#define XSHUT_1 1   // Sensor 1 (Left,   +45 deg)
+#define XSHUT_2 2   // Sensor 2 (Center,   0 deg forward)
+#define XSHUT_3 3   // Sensor 3 (Right,  -45 deg)
 
 // ==================================================
 // I2C ADDRESSES

@@ -6,11 +6,13 @@
 #include "motor_driver.h"
 #include "encoder.h"
 #include "pid_controller.h"
+#include "distance_sensors.h"
 
 // Subsystem instances
 MotorDriver motors;
 EncoderManager encoders;
 RobotController controller(motors);
+DistanceSensors distanceSensors;
 
 // Watchdog & Timing
 unsigned long lastCommandTime = 0;
@@ -143,12 +145,17 @@ void sendTelemetry(unsigned long now) {
     const char* stateStr = motors.getStateString();
     const char* flagsStr = watchdogTripped ? "WDG" : "OK";
 
-    // Format: TELE:<rpmL>,<rpmR>,<ticksL>,<ticksR>,<state>,<flags>
-    char teleBuf[128];
-    snprintf(teleBuf, sizeof(teleBuf), "TELE:%.1f,%.1f,%lld,%lld,%s,%s\n",
+    int16_t distL = distanceSensors.getDistanceLeftMm();
+    int16_t distC = distanceSensors.getDistanceCenterMm();
+    int16_t distR = distanceSensors.getDistanceRightMm();
+
+    // Format: TELE:<rpmL>,<rpmR>,<ticksL>,<ticksR>,<state>,<flags>,<distL>,<distC>,<distR>
+    char teleBuf[160];
+    snprintf(teleBuf, sizeof(teleBuf), "TELE:%.1f,%.1f,%lld,%lld,%s,%s,%d,%d,%d\n",
              rpmL, rpmR,
              (long long)ticksL, (long long)ticksR,
-             stateStr, flagsStr);
+             stateStr, flagsStr,
+             (int)distL, (int)distC, (int)distR);
 
     Serial.print(teleBuf);
 #if USE_HARDWARE_UART_RPI
@@ -169,6 +176,7 @@ void setup() {
     motors.init();
     encoders.init();
     controller.init();
+    distanceSensors.init();
 
     lastCommandTime = millis();
     lastTelemetryTime = millis();
@@ -197,6 +205,9 @@ void loop() {
                       encoders.getTicksLeft(),
                       encoders.getTicksRight());
 
-    // 4. Emit real-time telemetry stream
+    // 4. Update Time-of-Flight distance sensors
+    distanceSensors.update(now);
+
+    // 5. Emit real-time telemetry stream
     sendTelemetry(now);
 }

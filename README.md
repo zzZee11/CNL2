@@ -203,6 +203,23 @@ You can connect the Raspberry Pi 4B directly to the ESP32-S3 via the 40-pin GPIO
 > python3 robot_main.py --port /dev/serial0 --ssh
 > ```
 
+### ESP32-S3 → 3× VL53L0X Time-of-Flight Distance Sensors (I2C)
+
+The robot car uses 3 laser ToF distance sensors for front collision avoidance and dynamic A* obstacle grid mapping:
+- **Left Sensor (S1)**: +45° angled
+- **Center Sensor (S2)**: 0° straight forward
+- **Right Sensor (S3)**: −45° angled
+
+| Signal | ESP32-S3 GPIO | Sensor Pin | Description |
+|---|---|---|---|
+| I2C SDA | **GPIO 15** | SDA (shared) | Common I2C Data bus |
+| I2C SCL | **GPIO 16** | SCL (shared) | Common I2C Clock bus |
+| Sensor Power | **3.3V / VIN** | VIN (shared) | 3.3V or 5V logic supply |
+| Ground | **GND** | GND (shared) | Common Ground |
+| Left XSHUT | **GPIO 1** | XSHUT (S1) | Sequential address init (assigned to `0x30`) |
+| Center XSHUT | **GPIO 2** | XSHUT (S2) | Sequential address init (assigned to `0x31`) |
+| Right XSHUT | **GPIO 3** | XSHUT (S3) | Sequential address init (assigned to `0x32`) |
+
 ---
 
 ## Repository Structure
@@ -211,29 +228,33 @@ You can connect the Raspberry Pi 4B directly to the ESP32-S3 via the 40-pin GPIO
 CNL2/
 ├── README.md                          # ← This file
 ├── .gitignore
+├── raspberrypi_host                   # Symlink to rasberrypi_host
 │
 ├── esp32_firmware/                    # ESP32-S3 C++ firmware
 │   ├── esp32_firmware.ino             # Arduino IDE entry point
 │   ├── platformio.ini                 # PlatformIO project config
 │   ├── src/                           # Source files (Arduino IDE compatible)
-│   │   ├── config.h                   #   Pin mappings, PWM, encoder, PID params
-│   │   ├── main.cpp                   #   Setup/loop, serial parser, watchdog, telemetry
+│   │   ├── config.h                   #   Pin mappings, PWM, encoder, ToF, PID params
+│   │   ├── main.cpp                   #   Setup/loop, dual-serial parser, telemetry
 │   │   ├── motor_driver.h             #   MotorDriver class declaration
 │   │   ├── motor_driver.cpp           #   L298N H-bridge GPIO/PWM control
 │   │   ├── encoder.h                  #   EncoderManager class declaration
 │   │   ├── encoder.cpp                #   ISR-driven quadrature tick counting & RPM
 │   │   ├── pid_controller.h           #   RobotController class declaration
-│   │   └── pid_controller.cpp         #   Drive state mapping, sync trim, arc turns
+│   │   ├── pid_controller.cpp         #   Drive state mapping, sync trim, arc turns
+│   │   ├── distance_sensors.h         #   DistanceSensors class declaration (3x VL53L0X)
+│   │   └── distance_sensors.cpp       #   Sequential XSHUT I2C init & continuous ranging
 │   ├── include/                       # PlatformIO include path (mirrors src/ headers)
 │   │   ├── config.h
 │   │   ├── encoder.h
 │   │   ├── motor_driver.h
-│   │   └── pid_controller.h
-│   └── tests/                         # Isolated standalone test sketches
+│   │   ├── pid_controller.h
+│   │   └── distance_sensors.h
+│   └── tests/                         # Standalone test sketches
 │       ├── distance_sensor_test.cpp
 │       ├── motor_driver_test.cpp
-│       └── 3_distance_sensors/        # Standalone 3x VL53L0X distance sensor test sketch
-│           └── 3_distance_sensors.ino
+│       └── vl53l0x_distance_sensors/  # Standalone 3x VL53L0X distance sensor test sketch
+│           └── vl53l0x_distance_sensors.ino
 │
 ├── teleop_host/                       # Standalone teleoperation & serial drivers (Python)
 │   ├── README.md

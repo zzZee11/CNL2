@@ -493,6 +493,10 @@ class MasterStateMachine:
         """Execute one iteration of the Master State Machine."""
         telemetry = self.serial_mgr.get_telemetry()
 
+        # Update dynamic ToF distance sensor readings if arriving in telemetry
+        if telemetry.has_distance_sensors:
+            self.tof_readings = telemetry.tof_meters
+
         # Check safety watchdog connection
         if not self.serial_mgr.is_connected():
             if self.active_state not in (MasterState.IDLE, MasterState.ERROR):
@@ -555,7 +559,7 @@ class MasterStateMachine:
         layout.split_column(
             Layout(name="header", size=3),
             Layout(name="banner", size=3),
-            Layout(name="tables", size=10),
+            Layout(name="tables", size=13),
             Layout(name="footer", size=3),
         )
 
@@ -583,10 +587,14 @@ class MasterStateMachine:
         banner_content = mode_colors.get(self.active_state, f"MODE: {self.active_state}")
         layout["banner"].update(Panel(Text.from_markup(f"{banner_content}  |  Subsystem: [bold yellow]{self.subsystem_status}[/]"), style="bold"))
 
-        # Tables Split
+        # Tables Split (Left: Odometry + Distance Sensors, Right: State Machine & Controls)
         layout["tables"].split_row(
-            Layout(name="left_table", ratio=1),
-            Layout(name="right_table", ratio=1),
+            Layout(name="left_col", ratio=1),
+            Layout(name="right_col", ratio=1),
+        )
+        layout["tables"]["left_col"].split_column(
+            Layout(name="odometry", size=5),
+            Layout(name="distance_sensors", size=6),
         )
 
         is_connected = self.serial_mgr.is_connected()
@@ -612,7 +620,30 @@ class MasterStateMachine:
 
         enc_table.add_row("Left Wheel (M1)", f"{tele.ticks_left:,}", f"{tele.rpm_left:+.1f}", motor_status)
         enc_table.add_row("Right Wheel (M2)", f"{tele.ticks_right:,}", f"{tele.rpm_right:+.1f}", motor_status)
-        layout["tables"]["left_table"].update(enc_table)
+        layout["tables"]["left_col"]["odometry"].update(enc_table)
+
+        # Distance Sensors Table (3x VL53L0X ToF)
+        dist_table = Table(title="[bold yellow]VL53L0X Distance Sensors (ToF)[/]", expand=True)
+        dist_table.add_column("Sensor", justify="center")
+        dist_table.add_column("Angle", justify="center")
+        dist_table.add_column("Distance", justify="center")
+        dist_table.add_column("Proximity Status", justify="center")
+
+        def _fmt_tof(name: str, angle: str, d_mm: int):
+            if not is_connected or d_mm < 0:
+                return (name, angle, "[dim]-- mm[/]", "[dim]N/A (OFFLINE)[/]")
+            cm = d_mm / 10.0
+            if d_mm < 200:
+                return (name, angle, f"[bold red]{d_mm} mm ({cm:.1f} cm)[/]", "[bold red]DANGER (<20cm)[/]")
+            elif d_mm < 400:
+                return (name, angle, f"[bold yellow]{d_mm} mm ({cm:.1f} cm)[/]", "[bold yellow]CAUTION (<40cm)[/]")
+            else:
+                return (name, angle, f"[bold green]{d_mm} mm ({cm:.1f} cm)[/]", "[bold green]CLEAR[/]")
+
+        dist_table.add_row(*_fmt_tof("Left (S1)", "+45°", tele.dist_left))
+        dist_table.add_row(*_fmt_tof("Center (S2)", "0° FWD", tele.dist_center))
+        dist_table.add_row(*_fmt_tof("Right (S3)", "-45°", tele.dist_right))
+        layout["tables"]["left_col"]["distance_sensors"].update(dist_table)
 
         # Command & Navigation Table
         nav_table = Table(title="[bold yellow]State Machine & Controls[/]", expand=True)
@@ -627,7 +658,7 @@ class MasterStateMachine:
         nav_table.add_row("Safety Watchdog", wdg_display)
         nav_table.add_row("Vision Bridge", "[green]READY[/]" if HAVE_VISION else "[dim]DISABLED[/]")
         nav_table.add_row("A* Grid Planner", "[green]READY[/]" if HAVE_ASTAR else "[dim]DISABLED[/]")
-        layout["tables"]["right_table"].update(nav_table)
+        layout["tables"]["right_col"].update(nav_table)
 
         # Footer Shortcuts
         footer_text = Text.from_markup(
