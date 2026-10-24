@@ -62,25 +62,26 @@ class SerialManager:
             available = self.list_available_ports()
             if not available:
                 return False
-            # Prefer ttyACM (ESP32-S3 native USB) or ttyUSB (UART bridge) or /dev/serial0 (Pi GPIO UART)
+            # Prioritize Raspberry Pi GPIO UART pins 8 & 10 (/dev/serial0, /dev/ttyAMA0)
             target_port = available[0]
             found_preferred = False
             for p in available:
-                if "ACM" in p or "USB" in p:
+                if "serial0" in p or "ttyAMA0" in p:
                     target_port = p
                     found_preferred = True
                     break
             if not found_preferred:
                 for p in available:
-                    if "serial0" in p or "ttyAMA0" in p:
+                    if "ACM" in p or "USB" in p:
                         target_port = p
+                        found_preferred = True
                         break
 
         try:
             self._serial = serial.Serial(
                 port=target_port,
                 baudrate=self.baudrate,
-                timeout=0.1,
+                timeout=0.05,
                 write_timeout=None,
                 rtscts=False,
                 dsrdtr=False,
@@ -147,7 +148,6 @@ class SerialManager:
             packet = f"CMD:{cmd_char}\n".encode("ascii")
         try:
             self._serial.write(packet)
-            self._serial.flush()
             self.tx_packet_count += 1
             self.last_sent_packet = packet.decode("ascii").strip()
         except Exception as e:

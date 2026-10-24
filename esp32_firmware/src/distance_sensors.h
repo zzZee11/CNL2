@@ -30,6 +30,9 @@ public:
     bool isCenterReady() const { return _sensorCenterReady; }
     bool isRightReady() const { return _sensorRightReady; }
 
+    uint32_t getTotalReads() const { return _totalReads; }
+    uint32_t getTotalTimeouts() const { return _totalTimeouts; }
+
 private:
 #if HAVE_VL53L0X_LIB
     VL53L0X _sensorLeft;
@@ -38,6 +41,7 @@ private:
 
     bool initCenterSensor(VL53L0X& sensor, uint8_t newAddress, const char* name);
     bool initSensorWithXshut(VL53L0X& sensor, int xshutPin, uint8_t newAddress, const char* name);
+    void _pollSensor(VL53L0X& sensor, uint8_t idx, int16_t& distOut, unsigned long nowMs);
 #endif
 
     bool _sensorLeftReady;
@@ -48,6 +52,13 @@ private:
     int16_t _distCenterMm;
     int16_t _distRightMm;
 
-    unsigned long _lastReadTime;
+    uint8_t _currentSlot;
+    unsigned long _lastSlotTime;
+    uint8_t _consecutiveTimeouts[3];
+    unsigned long _lastValidTime[3];
+    unsigned long _offlineRetryTime[3];
+
+    uint32_t _totalReads;
+    uint32_t _totalTimeouts;
 };
 

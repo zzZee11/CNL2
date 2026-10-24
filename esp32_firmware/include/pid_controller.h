@@ -20,6 +20,9 @@ public:
     int16_t getOutputPwmL() const { return _lastPwmL; }
     int16_t getOutputPwmR() const { return _lastPwmR; }
 
+    uint32_t getTargetUpdateCount() const { return _targetUpdateCount; }
+    uint32_t getRedundantHeartbeatCount() const { return _redundantHeartbeatCount; }
+
 private:
     MotorDriver& _motors;
 
@@ -33,4 +36,7 @@ private:
 
     int16_t _lastPwmL;
     int16_t _lastPwmR;
+
+    uint32_t _targetUpdateCount;
+    uint32_t _redundantHeartbeatCount;
 };

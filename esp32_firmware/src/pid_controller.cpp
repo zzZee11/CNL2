@@ -9,7 +9,9 @@ RobotController::RobotController(MotorDriver& motorDriver)
       _startSyncTicksR(0),
       _syncActive(false),
       _lastPwmL(0),
-      _lastPwmR(0) {}
+      _lastPwmR(0),
+      _targetUpdateCount(0),
+      _redundantHeartbeatCount(0) {}
 
 void RobotController::init() {
     reset();
@@ -26,6 +28,13 @@ void RobotController::reset() {
 }
 
 void RobotController::setRawMotors(int16_t leftPwm, int16_t rightPwm) {
+    // Deduplication check: if raw PWM targets have not changed, ignore redundant packet
+    if (_lastPwmL == leftPwm && _lastPwmR == rightPwm) {
+        _redundantHeartbeatCount++;
+        return;
+    }
+
+    _targetUpdateCount++;
     _lastPwmL = leftPwm;
     _lastPwmR = rightPwm;
     _syncActive = false;
@@ -43,15 +52,17 @@ void RobotController::setRawMotors(int16_t leftPwm, int16_t rightPwm) {
 
 void RobotController::setCommand(DriveState state, uint8_t speed) {
     // If state and speed haven't changed, ignore redundant heartbeat packet to avoid
-    // resetting encoder sync loop baseline and hammering motor PWM registers
+    // resetting encoder sync loop baseline, rewriting PWM registers, and cogging motors
     if (_targetState == state && _targetSpeed == speed) {
+        _redundantHeartbeatCount++;
         return;
     }
 
+    _targetUpdateCount++;
     _targetState = state;
     _targetSpeed = speed;
     _motors.setState(state);
-    _syncActive = false; // Reset sync baseline on any state transition
+    _syncActive = false; // Reset sync baseline on any actual state transition
 
     switch (state) {
         case STATE_FWD: {
@@ -158,7 +169,12 @@ void RobotController::update(unsigned long nowMs, float rpmL, float rpmR, int64_
     }
 
 #if !ENABLE_ENCODER_SYNC
+    // Priority 2: Controlled diagnostic - encoder sync trim is completely disabled
     return;
+#else
+    if (SYNC_KP <= 0.0f) {
+        return; // Trim gain disabled
+    }
 #endif
 
     // Straight-line encoder synchronization only runs during pure FWD or REV

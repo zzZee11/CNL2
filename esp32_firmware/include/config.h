@@ -59,7 +59,10 @@
 #define I2C_ADDR_VL53L0X_CENTER 0x31  // Center is re-addressed from 0x29 -> 0x31 first
 #define I2C_ADDR_VL53L0X_RIGHT  0x32
 
-#define TOF_READ_INTERVAL_MS    50  // 20 Hz distance sampling rate
+#define TOF_READ_INTERVAL_MS    50  // Legacy distance sampling rate
+#define TOF_SLOT_INTERVAL_MS    20  // Non-blocking round-robin time-slice slot rate (~16.7 Hz per sensor)
+#define TOF_READ_TIMEOUT_MS     10  // Max 10 ms hardware timeout to prevent CPU loop blocking
+#define TOF_STALE_TIMEOUT_MS    250 // Mark sensor data stale (-1 mm) if no update in 250 ms
 
 // ==============================================================================
 // Motor & Inversion Settings
@@ -97,16 +100,14 @@
 #define INVERT_RIGHT_ENCODER  false
 
 // ==============================================================================
-// Closed-Loop Synchronization Parameters
+// Closed-Loop Synchronization Parameters (Controlled Diagnostic)
 // ==============================================================================
-// Set to false for silky-smooth open-loop PWM teleoperation.
-// Set to true only after verifying both wheel encoders count cleanly and match direction.
+// Priority 2: Temporarily disabled as a controlled diagnostic to prevent motor jitter.
+// When testing is complete and encoders are calibrated/verified, set ENABLE_ENCODER_SYNC to true
+// and restore SYNC_KP to 0.3f - 0.5f.
 #define ENABLE_ENCODER_SYNC     false
+#define SYNC_KP                 0.0f    // Controlled diagnostic: 0.0f trim gain (re-enable: 0.5f)
 #define SYNC_LOOP_INTERVAL_MS   30      // Loop interval (~33 Hz)
-
-// Straight-line encoder synchronization gain:
-// Proportional trim based on tick difference: trim = SYNC_KP * (deltaL - deltaR)
-#define SYNC_KP                 0.5f
 
 // Maximum allowed sync trim (prevents runaway/motor saturation)
 #define MAX_SYNC_TRIM_PWM       40

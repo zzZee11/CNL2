@@ -480,10 +480,19 @@ class MasterStateMachine:
             tty.setcbreak(fd)
             while self.running:
                 rlist, _, _ = select.select([sys.stdin], [], [], 0.05)
-                if rlist:
+                while rlist:
                     chars = sys.stdin.read(1)
-                    if chars:
-                        self._handle_char_press(chars.lower())
+                    if not chars:
+                        break
+                    # Consume ANSI escape sequences (e.g. arrow keys \x1b[A) so trailing chars aren't misinterpreted
+                    if chars == '\x1b':
+                        esc_r, _, _ = select.select([sys.stdin], [], [], 0.02)
+                        if esc_r:
+                            sys.stdin.read(2)
+                        break
+                    self._handle_char_press(chars.lower())
+                    # Non-blocking drain of any remaining buffered keys from SSH bursts
+                    rlist, _, _ = select.select([sys.stdin], [], [], 0.0)
 
                 # Clean up decayed keys in momentary mode (Linux TTY key-up emulation)
                 if not self.cruise_mode:

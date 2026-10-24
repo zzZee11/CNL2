@@ -20,13 +20,14 @@ enum DriveState {
 class MotorDriver {
 public:
     MotorDriver();
+    virtual ~MotorDriver() = default;
 
     void init();
     void setCommand(DriveState state, uint8_t speed);
-    void setRawMotors(int16_t leftPwm, int16_t rightPwm);
+    virtual void setRawMotors(int16_t leftPwm, int16_t rightPwm);
     void setState(DriveState state) { _currentState = state; }
-    void stop();
-    void brake();
+    virtual void stop();
+    virtual void brake();
 
     DriveState getCurrentState() const { return _currentState; }
     uint8_t getCurrentSpeed() const { return _currentSpeed; }

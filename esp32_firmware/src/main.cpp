@@ -28,6 +28,12 @@ static char rxBufferUART[64];
 static uint8_t rxIndexUART = 0;
 #endif
 
+// Priority 1: Separate watchdog/heartbeat freshness update from motor target updates
+inline void feedWatchdog() {
+    lastCommandTime = millis();
+    watchdogTripped = false;
+}
+
 void processCommand(const char* rawCmd) {
     // Expected format: CMD:<DIR>[,<SPEED>]
     // Examples: "CMD:W,200", "CMD:WA,200", "CMD:WD,200", "CMD:S,180", "CMD:X,0", "CMD:B,0"
@@ -40,7 +46,7 @@ void processCommand(const char* rawCmd) {
     const char* payload = cmdStart + 4;
     uint8_t speed = DEFAULT_DRIVE_SPEED;
 
-    // Parse direction code (e.g. "W", "WA", "WD", "SA", "SD", "A", "D", "X", "B")
+    // Parse direction code (e.g. "W", "WA", "WD", "SA", "SD", "A", "D", "X", "B", "HB", "PING")
     char dirCode[8];
     const char* commaPtr = strchr(payload, ',');
     if (commaPtr != nullptr) {
@@ -70,9 +76,13 @@ void processCommand(const char* rawCmd) {
         return;
     }
 
-    // Reset watchdog timer on any valid command
-    lastCommandTime = millis();
-    watchdogTripped = false;
+    // Priority 1: Refresh watchdog timer freshness on ANY valid packet or heartbeat
+    feedWatchdog();
+
+    // Pure heartbeat commands (keep watchdog fresh without affecting motor states)
+    if (strcmp(dirCode, "PING") == 0 || strcmp(dirCode, "HB") == 0) {
+        return;
+    }
 
     // Direct differential drive command from state machine: CMD:LR,<leftPwm>,<rightPwm>
     if (strcmp(dirCode, "LR") == 0 && commaPtr != nullptr) {
@@ -86,29 +96,39 @@ void processCommand(const char* rawCmd) {
     }
 
     // Map command codes to controller states
+    DriveState newState = STATE_STOP;
+    uint8_t newSpeed = speed;
+
     if (strcmp(dirCode, "WA") == 0) {
-        controller.setCommand(STATE_FWD_LEFT, speed);
+        newState = STATE_FWD_LEFT;
     } else if (strcmp(dirCode, "WD") == 0) {
-        controller.setCommand(STATE_FWD_RIGHT, speed);
+        newState = STATE_FWD_RIGHT;
     } else if (strcmp(dirCode, "SA") == 0) {
-        controller.setCommand(STATE_REV_LEFT, speed);
+        newState = STATE_REV_LEFT;
     } else if (strcmp(dirCode, "SD") == 0) {
-        controller.setCommand(STATE_REV_RIGHT, speed);
+        newState = STATE_REV_RIGHT;
     } else if (strcmp(dirCode, "W") == 0) {
-        controller.setCommand(STATE_FWD, speed);
+        newState = STATE_FWD;
     } else if (strcmp(dirCode, "S") == 0) {
-        controller.setCommand(STATE_REV, speed);
+        newState = STATE_REV;
     } else if (strcmp(dirCode, "A") == 0) {
-        controller.setCommand(STATE_LEFT, (speed > 0) ? speed : DEFAULT_TURN_SPEED);
+        newState = STATE_LEFT;
+        newSpeed = (speed > 0) ? speed : DEFAULT_TURN_SPEED;
     } else if (strcmp(dirCode, "D") == 0) {
-        controller.setCommand(STATE_RIGHT, (speed > 0) ? speed : DEFAULT_TURN_SPEED);
+        newState = STATE_RIGHT;
+        newSpeed = (speed > 0) ? speed : DEFAULT_TURN_SPEED;
     } else if (strcmp(dirCode, "B") == 0) {
-        controller.setCommand(STATE_BRAKE, 0);
+        newState = STATE_BRAKE;
+        newSpeed = 0;
     } else if (strcmp(dirCode, "X") == 0) {
-        controller.setCommand(STATE_STOP, 0);
+        newState = STATE_STOP;
+        newSpeed = 0;
     } else {
-        controller.setCommand(STATE_STOP, 0);
+        newState = STATE_STOP;
+        newSpeed = 0;
     }
+
+    controller.setCommand(newState, newSpeed);
 }
 
 static void readStream(Stream& stream, char* buffer, uint8_t& index, size_t maxLen) {
@@ -168,7 +188,9 @@ void sendTelemetry(unsigned long now) {
              stateStr, flagsStr,
              (int)distL, (int)distC, (int)distR);
 
-    Serial.print(teleBuf);
+    if (Serial) {
+        Serial.print(teleBuf);
+    }
 #if USE_HARDWARE_UART_RPI
     Serial1.print(teleBuf);
 #endif
@@ -181,6 +203,7 @@ void setup() {
     // GPIO 18 (RX) connects to Pi GPIO 14 (TXD, Pin 8)
     // GPIO 17 (TX) connects to Pi GPIO 15 (RXD, Pin 10)
     Serial1.setRxBufferSize(512);
+    Serial1.setTxBufferSize(512);
     Serial1.begin(SERIAL_BAUD_RATE, SERIAL_8N1, PIN_UART_RPI_RX, PIN_UART_RPI_TX);
 #endif
     while (!Serial && millis() < 1000);

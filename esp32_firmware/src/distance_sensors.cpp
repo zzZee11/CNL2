@@ -7,8 +7,16 @@ DistanceSensors::DistanceSensors()
     , _distLeftMm(-1)
     , _distCenterMm(-1)
     , _distRightMm(-1)
-    , _lastReadTime(0)
+    , _currentSlot(0)
+    , _lastSlotTime(0)
+    , _totalReads(0)
+    , _totalTimeouts(0)
 {
+    for (int i = 0; i < 3; i++) {
+        _consecutiveTimeouts[i] = 0;
+        _lastValidTime[i] = 0;
+        _offlineRetryTime[i] = 0;
+    }
 }
 
 #if HAVE_VL53L0X_LIB
@@ -23,7 +31,7 @@ bool DistanceSensors::initCenterSensor(VL53L0X& sensor, uint8_t newAddress, cons
 
     // Assign custom address to free 0x29 for subsequent sensors
     sensor.setAddress(newAddress);
-    sensor.setTimeout(25);
+    sensor.setTimeout(TOF_READ_TIMEOUT_MS);
     sensor.startContinuous(50);
 
     Serial.printf("# [ToF] %s (no XSHUT) re-addressed 0x29 -> 0x%02X OK\n", name, newAddress);
@@ -44,11 +52,34 @@ bool DistanceSensors::initSensorWithXshut(VL53L0X& sensor, int xshutPin, uint8_t
 
     // Set custom I2C address
     sensor.setAddress(newAddress);
-    sensor.setTimeout(25);
+    sensor.setTimeout(TOF_READ_TIMEOUT_MS);
     sensor.startContinuous(50);
 
     Serial.printf("# [ToF] %s initialized at 0x%02X\n", name, newAddress);
     return true;
+}
+
+void DistanceSensors::_pollSensor(VL53L0X& sensor, uint8_t idx, int16_t& distOut, unsigned long nowMs) {
+    // If sensor has repeatedly timed out (offline/unplugged), back off and probe only every 2 seconds
+    if (_consecutiveTimeouts[idx] >= 3 && (nowMs < _offlineRetryTime[idx])) {
+        distOut = -1;
+        return;
+    }
+
+    uint16_t d = sensor.readRangeContinuousMillimeters();
+    if (sensor.timeoutOccurred() || d > 8190) {
+        _consecutiveTimeouts[idx]++;
+        _totalTimeouts++;
+        distOut = -1;
+        if (_consecutiveTimeouts[idx] >= 3) {
+            _offlineRetryTime[idx] = nowMs + 2000; // 2-second backoff to prevent bus stalling
+        }
+    } else {
+        _consecutiveTimeouts[idx] = 0;
+        _totalReads++;
+        distOut = (int16_t)d;
+        _lastValidTime[idx] = nowMs;
+    }
 }
 #endif
 
@@ -84,29 +115,31 @@ void DistanceSensors::init() {
 
 void DistanceSensors::update(unsigned long nowMs) {
 #if HAVE_VL53L0X_LIB
-    if (nowMs - _lastReadTime < TOF_READ_INTERVAL_MS) {
-        return;
-    }
-    _lastReadTime = nowMs;
+    // Priority 3: Non-blocking round-robin time-sliced polling.
+    // Services at most ONE sensor per time slot (20 ms), guaranteeing the ESP32
+    // main loop is never blocked by concurrent I2C transactions.
+    if (nowMs - _lastSlotTime >= TOF_SLOT_INTERVAL_MS) {
+        _lastSlotTime = nowMs;
+        uint8_t slot = _currentSlot;
+        _currentSlot = (_currentSlot + 1) % 3;
 
-    if (_sensorLeftReady) {
-        uint16_t d = _sensorLeft.readRangeContinuousMillimeters();
-        _distLeftMm = (_sensorLeft.timeoutOccurred() || d > 8190) ? -1 : (int16_t)d;
-    } else {
+        if (slot == 0 && _sensorLeftReady) {
+            _pollSensor(_sensorLeft, 0, _distLeftMm, nowMs);
+        } else if (slot == 1 && _sensorCenterReady) {
+            _pollSensor(_sensorCenter, 1, _distCenterMm, nowMs);
+        } else if (slot == 2 && _sensorRightReady) {
+            _pollSensor(_sensorRight, 2, _distRightMm, nowMs);
+        }
+    }
+
+    // Safety behavior: invalidate readings (mark -1 mm) if sensor data is stale (> 250 ms)
+    if (_lastValidTime[0] > 0 && (nowMs - _lastValidTime[0] > TOF_STALE_TIMEOUT_MS)) {
         _distLeftMm = -1;
     }
-
-    if (_sensorCenterReady) {
-        uint16_t d = _sensorCenter.readRangeContinuousMillimeters();
-        _distCenterMm = (_sensorCenter.timeoutOccurred() || d > 8190) ? -1 : (int16_t)d;
-    } else {
+    if (_lastValidTime[1] > 0 && (nowMs - _lastValidTime[1] > TOF_STALE_TIMEOUT_MS)) {
         _distCenterMm = -1;
     }
-
-    if (_sensorRightReady) {
-        uint16_t d = _sensorRight.readRangeContinuousMillimeters();
-        _distRightMm = (_sensorRight.timeoutOccurred() || d > 8190) ? -1 : (int16_t)d;
-    } else {
+    if (_lastValidTime[2] > 0 && (nowMs - _lastValidTime[2] > TOF_STALE_TIMEOUT_MS)) {
         _distRightMm = -1;
     }
 #endif

@@ -5,6 +5,12 @@ volatile int64_t EncoderManager::_ticksLeft = 0;
 volatile int64_t EncoderManager::_ticksRight = 0;
 portMUX_TYPE EncoderManager::_mux = portMUX_INITIALIZER_UNLOCKED;
 
+// Glitch filter: 100 microseconds debounce window filters out 20 kHz PWM inductive noise
+// while allowing accurate pulse counting up to 1,800 RPM (well above 200 RPM motor max).
+static volatile unsigned long _lastMicrosLeft = 0;
+static volatile unsigned long _lastMicrosRight = 0;
+#define ENCODER_DEBOUNCE_US 100
+
 EncoderManager::EncoderManager()
     : _prevTicksLeft(0), _prevTicksRight(0), _lastCalcTime(0),
       _rpmLeft(0.0f), _rpmRight(0.0f) {}
@@ -24,6 +30,12 @@ void EncoderManager::init() {
 }
 
 void IRAM_ATTR EncoderManager::isrLeft() {
+    unsigned long now = micros();
+    if (now - _lastMicrosLeft < ENCODER_DEBOUNCE_US) {
+        return; // Noise / inductive PWM bounce rejection
+    }
+    _lastMicrosLeft = now;
+
     portENTER_CRITICAL_ISR(&_mux);
     // If Phase B is LOW on Phase A rising edge, wheel is rotating forward
     bool dir = digitalRead(PIN_ENC_L_B);
@@ -38,6 +50,12 @@ void IRAM_ATTR EncoderManager::isrLeft() {
 }
 
 void IRAM_ATTR EncoderManager::isrRight() {
+    unsigned long now = micros();
+    if (now - _lastMicrosRight < ENCODER_DEBOUNCE_US) {
+        return; // Noise / inductive PWM bounce rejection
+    }
+    _lastMicrosRight = now;
+
     portENTER_CRITICAL_ISR(&_mux);
     // If Phase B is LOW on Phase A rising edge, wheel is rotating forward
     bool dir = digitalRead(PIN_ENC_R_B);
@@ -74,6 +92,8 @@ void EncoderManager::reset() {
     _prevTicksLeft = 0;
     _prevTicksRight = 0;
     _lastCalcTime = millis();
+    _lastMicrosLeft = 0;
+    _lastMicrosRight = 0;
     _rpmLeft = 0.0f;
     _rpmRight = 0.0f;
 }
