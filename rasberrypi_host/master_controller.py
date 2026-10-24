@@ -284,7 +284,7 @@ class MasterStateMachine:
         # Keyboard Tracking & SSH Adaptations
         self.is_ssh = bool(os.environ.get("SSH_CLIENT") or os.environ.get("SSH_TTY") or not os.environ.get("DISPLAY"))
         self.key_decay_s = 0.85 if self.is_ssh else 0.70
-        self.cruise_mode = False  # Toggle between Momentary (hold) and Cruise (latched) mode
+        self.cruise_mode = True  # Default: Latched (Tap to Move, Space Bar to Brake)
         self.active_keys: Set[str] = set()
         self.key_last_seen: Dict[str, float] = {}
         self.last_wasd_cmd = "X"
@@ -314,6 +314,7 @@ class MasterStateMachine:
             return
         old_mode = self.active_state
         self.active_state = new_mode
+        self.active_keys.clear()
 
         if new_mode == MasterState.TELEOP:
             self.serial_mgr.set_drive_command("X", 0)
@@ -385,6 +386,8 @@ class MasterStateMachine:
             pass
 
     def _on_pynput_release(self, key):
+        if self.cruise_mode:
+            return  # In Latched mode, releasing a key does not stop motion; only Space/X stops
         try:
             if hasattr(key, "char") and key.char:
                 char = key.char.lower()
@@ -412,10 +415,9 @@ class MasterStateMachine:
             self.set_mode(MasterState.IDLE)
             return
         elif char == "c":
-            # Toggle between Momentary (hold) and Cruise (latched) mode
+            # Toggle between Latched (tap to move) and Momentary (hold) mode
             self.cruise_mode = not self.cruise_mode
-            if not self.cruise_mode:
-                self.active_keys.clear()
+            self.active_keys.clear()
             return
         elif char in ("+", "="):
             self.speed = min(255, self.speed + 15)
@@ -427,17 +429,22 @@ class MasterStateMachine:
             self.running = False
             return
 
-        # Cruise control / Latched logic (ideal for SSH)
+        # Drive Controls (Latched / Tap to Move, Space Bar to Brake)
         if self.cruise_mode:
-            if char in (" ", "x"):
+            if char in (" ", "b"):
+                # Space Bar or 'B' -> Immediate Active Brake
+                self.active_keys = {" "}
+            elif char == "x":
+                # 'X' -> Soft Stop / Freewheel
                 self.active_keys.clear()
-                if char == " ":
-                    self.active_keys.add(" ")
             elif char == "w":
+                # Straight Forward
                 self.active_keys = {"w"}
             elif char == "s":
+                # Straight Reverse
                 self.active_keys = {"s"}
             elif char == "a":
+                # Steer Left: if already moving forward/reverse, steer into an arc turn; else pivot left
                 if "w" in self.active_keys:
                     self.active_keys = {"w", "a"}
                 elif "s" in self.active_keys:
@@ -445,6 +452,7 @@ class MasterStateMachine:
                 else:
                     self.active_keys = {"a"}
             elif char == "d":
+                # Steer Right: if already moving forward/reverse, steer into an arc turn; else pivot right
                 if "w" in self.active_keys:
                     self.active_keys = {"w", "d"}
                 elif "s" in self.active_keys:
@@ -453,9 +461,11 @@ class MasterStateMachine:
                     self.active_keys = {"d"}
             return
 
-        # Momentary hold logic
-        if char in ("w", "s", "a", "d", " "):
+        # Momentary hold logic (legacy fallback)
+        if char in ("w", "s", "a", "d"):
             self.active_keys.add(char)
+        elif char in (" ", "b"):
+            self.active_keys = {" "}
         elif char == "x":
             self.active_keys.clear()
 
@@ -653,10 +663,16 @@ class MasterStateMachine:
         nav_table.add_column("Property", justify="left")
         nav_table.add_column("Current Value", justify="center")
 
-        pressed_str = ", ".join(sorted(self.active_keys)).upper() if self.active_keys else "NONE"
-        drive_mode_str = "[bold cyan]CRUISE (LATCHED)[/]" if self.cruise_mode else "[bold green]MOMENTARY (HOLD)[/]"
+        if " " in self.active_keys:
+            pressed_str = "[bold red]BRAKE (SPACE ACTIVE)[/]"
+        elif self.active_keys:
+            pressed_str = ", ".join(sorted(self.active_keys)).upper()
+        else:
+            pressed_str = "STOPPED (X)"
+
+        drive_mode_str = "[bold cyan]LATCHED (TAP TO MOVE, SPACE TO BRAKE)[/]" if self.cruise_mode else "[bold yellow]MOMENTARY (HOLD)[/]"
         nav_table.add_row("Drive Input Mode", drive_mode_str)
-        nav_table.add_row("Active Held Keys", f"[bold white]{pressed_str}[/]")
+        nav_table.add_row("Active Motion State", f"[bold white]{pressed_str}[/]")
         nav_table.add_row("Last Drive Command", f"[bold green]{self.last_wasd_cmd}[/]")
         nav_table.add_row("Last Serial Packet", f"[bold green]{self.serial_mgr.last_sent_packet}[/]" if self.serial_mgr.last_sent_packet else "[dim]NONE[/]")
         tx_status_str = f"[bold red]ERR: {self.serial_mgr.last_tx_error}[/]" if self.serial_mgr.tx_error_count > 0 else f"[bold green]OK ({self.serial_mgr.tx_packet_count} pkts)[/]"
@@ -668,14 +684,12 @@ class MasterStateMachine:
 
         # Footer Shortcuts
         footer_text = Text.from_markup(
-            "[bold white]Shortcuts:[/] "
-            "[bold green][T/1][/] Teleop  "
-            "[bold cyan][F/2][/] Follow  "
-            "[bold magenta][N/3][/] Nav  "
-            "[bold yellow][I/0][/] Idle  "
-            "[bold magenta][C][/] Cruise/Hold  "
-            "[bold red][Space][/] Brake  "
+            "[bold white]Controls:[/] "
+            "[bold green][W/A/S/D][/] Drive (Tap to Move)  "
+            "[bold red][Space][/] BRAKE (Stop All Motion)  "
+            "[bold yellow][X][/] Stop  "
             "[bold blue][+/-][/] Speed  "
+            "[bold cyan][T/F/N][/] Modes  "
             "[bold red][Q][/] Quit"
         )
         layout["footer"].update(Panel(footer_text, style="blue"))
