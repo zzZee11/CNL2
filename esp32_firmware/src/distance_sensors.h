@@ -5,7 +5,14 @@
 #include "config.h"
 
 #if USE_VL53L0X_SENSORS
-#include <VL53L0X.h>
+  #if __has_include(<VL53L0X.h>)
+    #include <VL53L0X.h>
+    #define HAVE_VL53L0X_LIB 1
+  #else
+    #define HAVE_VL53L0X_LIB 0
+  #endif
+#else
+  #define HAVE_VL53L0X_LIB 0
 #endif
 
 class DistanceSensors {
@@ -24,7 +31,7 @@ public:
     bool isRightReady() const { return _sensorRightReady; }
 
 private:
-#if USE_VL53L0X_SENSORS
+#if HAVE_VL53L0X_LIB
     VL53L0X _sensorLeft;
     VL53L0X _sensorCenter;
     VL53L0X _sensorRight;

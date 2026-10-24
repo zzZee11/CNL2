@@ -11,7 +11,7 @@ DistanceSensors::DistanceSensors()
 {
 }
 
-#if USE_VL53L0X_SENSORS
+#if HAVE_VL53L0X_LIB
 // Center sensor has NO XSHUT pin connected: it is always powered.
 // It is the only sensor active on the bus initially (while Left & Right are held LOW).
 bool DistanceSensors::initCenterSensor(VL53L0X& sensor, uint8_t newAddress, const char* name) {
@@ -53,7 +53,7 @@ bool DistanceSensors::initSensorWithXshut(VL53L0X& sensor, int xshutPin, uint8_t
 #endif
 
 void DistanceSensors::init() {
-#if USE_VL53L0X_SENSORS
+#if HAVE_VL53L0X_LIB
     // 1. Configure the 2 available XSHUT pins (Left and Right)
     pinMode(PIN_XSHUT_LEFT, OUTPUT);
     pinMode(PIN_XSHUT_RIGHT, OUTPUT);
@@ -76,11 +76,14 @@ void DistanceSensors::init() {
 
     // 6. Release Right sensor, initialize at 0x29, and move to I2C_ADDR_VL53L0X_RIGHT (0x32)
     _sensorRightReady = initSensorWithXshut(_sensorRight, PIN_XSHUT_RIGHT, I2C_ADDR_VL53L0X_RIGHT, "Right Sensor (S3)");
+#else
+    Serial.println("# [ToF] Notice: 'VL53L0X by Pololu' library not installed in Arduino IDE.");
+    Serial.println("# [ToF] Install it via Library Manager: Tools -> Manage Libraries -> search 'VL53L0X'");
 #endif
 }
 
 void DistanceSensors::update(unsigned long nowMs) {
-#if USE_VL53L0X_SENSORS
+#if HAVE_VL53L0X_LIB
     if (nowMs - _lastReadTime < TOF_READ_INTERVAL_MS) {
         return;
     }
