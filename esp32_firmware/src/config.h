@@ -65,7 +65,7 @@
 // Motor & Inversion Settings
 // ==============================================================================
 #define INVERT_LEFT_MOTOR     false
-#define INVERT_RIGHT_MOTOR    false
+#define INVERT_RIGHT_MOTOR    true
 
 // Steering behavior for A and D keys:
 // When true:
