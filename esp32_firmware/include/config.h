@@ -27,6 +27,17 @@
 #define PIN_ENC_R_B         11  // Phase B (Direction)
 
 // ==============================================================================
+// Hardware UART for Raspberry Pi 4B GPIO Serial Connection
+// ==============================================================================
+// Direct 3.3V logic connection between ESP32-S3 and Raspberry Pi 4B GPIO header:
+//   ESP32-S3 PIN_UART_RPI_RX (GPIO 18) <---> Raspberry Pi GPIO 14 (Physical Pin 8,  TXD)
+//   ESP32-S3 PIN_UART_RPI_TX (GPIO 17) <---> Raspberry Pi GPIO 15 (Physical Pin 10, RXD)
+//   ESP32-S3 GND                       <---> Raspberry Pi GND     (Physical Pin 6 or 9)
+#define USE_HARDWARE_UART_RPI   true
+#define PIN_UART_RPI_RX         18  // ESP32 RX pin (receives from Pi TX)
+#define PIN_UART_RPI_TX         17  // ESP32 TX pin (transmits to Pi RX)
+
+// ==============================================================================
 // Motor & Inversion Settings
 // ==============================================================================
 #define INVERT_LEFT_MOTOR     false

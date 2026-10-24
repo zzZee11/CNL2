@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <stdio.h>
 #include <string.h>
 #include <ctype.h>
 #include "config.h"
@@ -16,9 +17,14 @@ unsigned long lastCommandTime = 0;
 unsigned long lastTelemetryTime = 0;
 bool watchdogTripped = true;
 
-// Incoming serial buffer
-static char rxBuffer[64];
-static uint8_t rxIndex = 0;
+// Incoming serial buffers (USB CDC and Hardware UART for Raspberry Pi)
+static char rxBufferUSB[64];
+static uint8_t rxIndexUSB = 0;
+
+#if USE_HARDWARE_UART_RPI
+static char rxBufferUART[64];
+static uint8_t rxIndexUART = 0;
+#endif
 
 void processCommand(const char* cmdStr) {
     // Expected format: CMD:<DIR>[,<SPEED>]
@@ -92,22 +98,29 @@ void processCommand(const char* cmdStr) {
     }
 }
 
-void readSerialInput() {
-    while (Serial.available() > 0) {
-        char c = (char)Serial.read();
+static void readStream(Stream& stream, char* buffer, uint8_t& index, size_t maxLen) {
+    while (stream.available() > 0) {
+        char c = (char)stream.read();
 
         if (c == '\n' || c == '\r') {
-            if (rxIndex > 0) {
-                rxBuffer[rxIndex] = '\0';
-                processCommand(rxBuffer);
-                rxIndex = 0;
+            if (index > 0) {
+                buffer[index] = '\0';
+                processCommand(buffer);
+                index = 0;
             }
-        } else if (rxIndex < sizeof(rxBuffer) - 1) {
-            rxBuffer[rxIndex++] = c;
+        } else if (index < maxLen - 1) {
+            buffer[index++] = c;
         } else {
-            rxIndex = 0;
+            index = 0; // buffer overflow reset
         }
     }
+}
+
+void readSerialInput() {
+    readStream(Serial, rxBufferUSB, rxIndexUSB, sizeof(rxBufferUSB));
+#if USE_HARDWARE_UART_RPI
+    readStream(Serial1, rxBufferUART, rxIndexUART, sizeof(rxBufferUART));
+#endif
 }
 
 void checkWatchdog(unsigned long now) {
@@ -131,14 +144,26 @@ void sendTelemetry(unsigned long now) {
     const char* flagsStr = watchdogTripped ? "WDG" : "OK";
 
     // Format: TELE:<rpmL>,<rpmR>,<ticksL>,<ticksR>,<state>,<flags>
-    Serial.printf("TELE:%.1f,%.1f,%lld,%lld,%s,%s\n",
-                  rpmL, rpmR,
-                  (long long)ticksL, (long long)ticksR,
-                  stateStr, flagsStr);
+    char teleBuf[128];
+    snprintf(teleBuf, sizeof(teleBuf), "TELE:%.1f,%.1f,%lld,%lld,%s,%s\n",
+             rpmL, rpmR,
+             (long long)ticksL, (long long)ticksR,
+             stateStr, flagsStr);
+
+    Serial.print(teleBuf);
+#if USE_HARDWARE_UART_RPI
+    Serial1.print(teleBuf);
+#endif
 }
 
 void setup() {
     Serial.begin(SERIAL_BAUD_RATE);
+#if USE_HARDWARE_UART_RPI
+    // Initialize hardware UART1 connected to Raspberry Pi 4B GPIO header:
+    // GPIO 18 (RX) connects to Pi GPIO 14 (TXD, Pin 8)
+    // GPIO 17 (TX) connects to Pi GPIO 15 (RXD, Pin 10)
+    Serial1.begin(SERIAL_BAUD_RATE, SERIAL_8N1, PIN_UART_RPI_RX, PIN_UART_RPI_TX);
+#endif
     while (!Serial && millis() < 1000);
 
     motors.init();
@@ -150,6 +175,9 @@ void setup() {
     watchdogTripped = true;
 
     Serial.println("# ESP32-S3 Multi-Key Robot Car Controller Ready");
+#if USE_HARDWARE_UART_RPI
+    Serial1.println("# ESP32-S3 Multi-Key Robot Car Controller Ready (UART1)");
+#endif
 }
 
 void loop() {

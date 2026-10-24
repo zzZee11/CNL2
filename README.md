@@ -180,6 +180,29 @@ A two-wheeled differential-drive robot car powered by an **ESP32-S3** microcontr
 
 > **⚠️ Important**: The ESP32-S3 GND and L298N GND **must** be connected together (common ground). Without this, serial communication and PWM signals will be unreliable.
 
+### ESP32-S3 → Raspberry Pi 4B GPIO Serial Connection (Hardware UART)
+
+You can connect the Raspberry Pi 4B directly to the ESP32-S3 via the 40-pin GPIO header without needing a USB cable. Both boards share compatible **3.3V logic levels** (no level shifter required).
+
+| Raspberry Pi 4B Pin | Raspberry Pi Function | ESP32-S3 Pin | ESP32-S3 Function |
+|---|---|---|---|
+| **Pin 8** (GPIO 14) | UART0 TXD | **GPIO 18** | `PIN_UART_RPI_RX` (Receive) |
+| **Pin 10** (GPIO 15) | UART0 RXD | **GPIO 17** | `PIN_UART_RPI_TX` (Transmit) |
+| **Pin 6 or 9** | GND | **GND** | Common Ground |
+
+> **⚠️ Critical Configuration on Raspberry Pi**:
+> By default, Raspberry Pi OS attaches a serial login shell (console) to the GPIO pins. You must disable the login shell and enable the hardware serial port:
+> 1. Run `sudo raspi-config`
+> 2. Go to **Interface Options** → **Serial Port**
+> 3. *Would you like a login shell to be accessible over serial?* → Select **No**
+> 4. *Would you like the serial port hardware to be enabled?* → Select **Yes**
+> 5. Finish and reboot the Pi (`sudo reboot`).
+>
+> Once rebooted, the port will be available as `/dev/serial0`. You can launch the robot controller with:
+> ```bash
+> python3 robot_main.py --port /dev/serial0 --ssh
+> ```
+
 ---
 
 ## Repository Structure

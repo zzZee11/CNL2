@@ -44,7 +44,7 @@ class SerialManager:
         ports = serial.tools.list_ports.comports()
         device_list = [p.device for p in ports]
         # Check standard Raspberry Pi GPIO UART & USB symlinks if present
-        for extra in ("/dev/ttyACM0", "/dev/ttyACM1", "/dev/ttyUSB0", "/dev/ttyUSB1", "/dev/serial0"):
+        for extra in ("/dev/ttyACM0", "/dev/ttyACM1", "/dev/ttyUSB0", "/dev/ttyUSB1", "/dev/serial0", "/dev/ttyAMA0"):
             if os.path.exists(extra) and extra not in device_list:
                 device_list.append(extra)
         return device_list
@@ -56,12 +56,19 @@ class SerialManager:
             available = self.list_available_ports()
             if not available:
                 return False
-            # Prefer ttyACM (ESP32-S3 native USB) or ttyUSB (UART bridge)
+            # Prefer ttyACM (ESP32-S3 native USB) or ttyUSB (UART bridge) or /dev/serial0 (Pi GPIO UART)
             target_port = available[0]
+            found_preferred = False
             for p in available:
                 if "ACM" in p or "USB" in p:
                     target_port = p
+                    found_preferred = True
                     break
+            if not found_preferred:
+                for p in available:
+                    if "serial0" in p or "ttyAMA0" in p:
+                        target_port = p
+                        break
 
         try:
             self._serial = serial.Serial(
