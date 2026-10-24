@@ -13,8 +13,16 @@ Needs a_search_main.py (teammate's file) in the same folder.
 import math
 import queue
 import struct
+import sys
 import threading
 import time
+from pathlib import Path
+
+# Ensure local folder and parent repo root are on sys.path
+_this_dir = Path(__file__).resolve().parent
+for _p in (str(_this_dir), str(_this_dir.parent)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from a_search_main import (
     create_empty_grid, astar_grid, is_path_blocked, mark_obstacle,

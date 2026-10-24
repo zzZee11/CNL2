@@ -219,6 +219,7 @@ CNL2/
 │
 ├── rasberrypi_host/                   # Raspberry Pi autonomous pipeline
 │   ├── robot_main_1.py                # State machine: nav, follow, serial link
+│   ├── a_search_main.py               # A* grid path planning & APF obstacle avoidance
 │   ├── vision_bridge.py               # Bridge between vision pipeline & robot controller
 │   └── vision/                        # Computer vision subsystem
 │       ├── config.py                  #   YOLO, camera, gait, & safety parameters
@@ -235,6 +236,7 @@ CNL2/
 │           ├── detect.tflite
 │           └── labelmap.txt
 │
+├── a_search_main.py                   # A* algorithm implementation
 └── test.py                            # Miscellaneous test script
 ```
 
