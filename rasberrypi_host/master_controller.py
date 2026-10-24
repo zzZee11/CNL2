@@ -568,10 +568,13 @@ class MasterStateMachine:
         port_str = self.serial_mgr.port or "AUTO-SEARCH"
 
         # Header
+        tx_stat = f"[bold cyan]TX:[/] {self.serial_mgr.tx_packet_count}"
+        if self.serial_mgr.tx_error_count > 0:
+            tx_stat += f" ([bold red]Err: {self.serial_mgr.tx_error_count}[/])"
         header_text = Text.from_markup(
             f" [bold cyan]Port:[/] {port_str} | [bold cyan]Status:[/] {conn_str} | "
-            f"[bold cyan]Rate:[/] {self.serial_mgr.packet_rate:.1f} Hz | "
-            f"[bold cyan]Drive PWM:[/] [bold yellow]{self.speed}/255[/]"
+            f"[bold cyan]RX Rate:[/] {self.serial_mgr.packet_rate:.1f} Hz | "
+            f"{tx_stat} | [bold cyan]Drive PWM:[/] [bold yellow]{self.speed}/255[/]"
         )
         layout["header"].update(Panel(header_text, style="cyan"))
 
@@ -655,6 +658,9 @@ class MasterStateMachine:
         nav_table.add_row("Drive Input Mode", drive_mode_str)
         nav_table.add_row("Active Held Keys", f"[bold white]{pressed_str}[/]")
         nav_table.add_row("Last Drive Command", f"[bold green]{self.last_wasd_cmd}[/]")
+        nav_table.add_row("Last Serial Packet", f"[bold green]{self.serial_mgr.last_sent_packet}[/]" if self.serial_mgr.last_sent_packet else "[dim]NONE[/]")
+        tx_status_str = f"[bold red]ERR: {self.serial_mgr.last_tx_error}[/]" if self.serial_mgr.tx_error_count > 0 else f"[bold green]OK ({self.serial_mgr.tx_packet_count} pkts)[/]"
+        nav_table.add_row("Serial TX Status", tx_status_str)
         nav_table.add_row("Safety Watchdog", wdg_display)
         nav_table.add_row("Vision Bridge", "[green]READY[/]" if HAVE_VISION else "[dim]DISABLED[/]")
         nav_table.add_row("A* Grid Planner", "[green]READY[/]" if HAVE_ASTAR else "[dim]DISABLED[/]")

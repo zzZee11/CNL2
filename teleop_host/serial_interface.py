@@ -37,6 +37,12 @@ class SerialManager:
         self._last_rate_calc = time.time()
         self._packets_since_calc = 0
 
+        # TX statistics & diagnostics
+        self.tx_packet_count = 0
+        self.tx_error_count = 0
+        self.last_tx_error = ""
+        self.last_sent_packet = ""
+
     @staticmethod
     def list_available_ports() -> List[str]:
         """Returns list of device names for connected USB serial ports and Raspberry Pi UARTs."""
@@ -75,7 +81,10 @@ class SerialManager:
                 port=target_port,
                 baudrate=self.baudrate,
                 timeout=0.1,
-                write_timeout=0.2,
+                write_timeout=None,
+                rtscts=False,
+                dsrdtr=False,
+                xonxoff=False,
             )
             self.port = target_port
             self._running = True
@@ -132,8 +141,11 @@ class SerialManager:
         try:
             self._serial.write(packet)
             self._serial.flush()
-        except Exception:
-            pass
+            self.tx_packet_count += 1
+            self.last_sent_packet = packet.decode("ascii").strip()
+        except Exception as e:
+            self.tx_error_count += 1
+            self.last_tx_error = str(e)
 
     def _tx_loop(self) -> None:
         """Periodic transmitter loop to feed the 300 ms ESP32 watchdog."""

@@ -28,14 +28,16 @@ static char rxBufferUART[64];
 static uint8_t rxIndexUART = 0;
 #endif
 
-void processCommand(const char* cmdStr) {
+void processCommand(const char* rawCmd) {
     // Expected format: CMD:<DIR>[,<SPEED>]
     // Examples: "CMD:W,200", "CMD:WA,200", "CMD:WD,200", "CMD:S,180", "CMD:X,0", "CMD:B,0"
-    if (strncmp(cmdStr, "CMD:", 4) != 0) {
+    // Use strstr to tolerate any leading noise, garbage, or framing bytes
+    const char* cmdStart = strstr(rawCmd, "CMD:");
+    if (cmdStart == nullptr) {
         return;
     }
 
-    const char* payload = cmdStr + 4;
+    const char* payload = cmdStart + 4;
     uint8_t speed = DEFAULT_DRIVE_SPEED;
 
     // Parse direction code (e.g. "W", "WA", "WD", "SA", "SD", "A", "D", "X", "B")
@@ -54,12 +56,21 @@ void processCommand(const char* cmdStr) {
         dirCode[sizeof(dirCode) - 1] = '\0';
     }
 
-    // Convert direction code to uppercase
+    // Strip any whitespace/CR/LF and convert direction code to uppercase
+    int writeIdx = 0;
     for (int i = 0; dirCode[i]; i++) {
-        dirCode[i] = toupper((unsigned char)dirCode[i]);
+        char c = dirCode[i];
+        if (isalnum((unsigned char)c)) {
+            dirCode[writeIdx++] = toupper((unsigned char)c);
+        }
+    }
+    dirCode[writeIdx] = '\0';
+
+    if (dirCode[0] == '\0') {
+        return;
     }
 
-    // Reset watchdog timer
+    // Reset watchdog timer on any valid command
     lastCommandTime = millis();
     watchdogTripped = false;
 
@@ -169,6 +180,7 @@ void setup() {
     // Initialize hardware UART1 connected to Raspberry Pi 4B GPIO header:
     // GPIO 18 (RX) connects to Pi GPIO 14 (TXD, Pin 8)
     // GPIO 17 (TX) connects to Pi GPIO 15 (RXD, Pin 10)
+    Serial1.setRxBufferSize(512);
     Serial1.begin(SERIAL_BAUD_RATE, SERIAL_8N1, PIN_UART_RPI_RX, PIN_UART_RPI_TX);
 #endif
     while (!Serial && millis() < 1000);
