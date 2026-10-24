@@ -559,7 +559,7 @@ class MasterStateMachine:
         layout.split_column(
             Layout(name="header", size=3),
             Layout(name="banner", size=3),
-            Layout(name="tables", size=13),
+            Layout(name="tables"),
             Layout(name="footer", size=3),
         )
 
@@ -593,8 +593,8 @@ class MasterStateMachine:
             Layout(name="right_col", ratio=1),
         )
         layout["tables"]["left_col"].split_column(
-            Layout(name="odometry", size=5),
-            Layout(name="distance_sensors", size=6),
+            Layout(name="odometry", size=7),
+            Layout(name="distance_sensors", size=8),
         )
 
         is_connected = self.serial_mgr.is_connected()
