@@ -83,48 +83,42 @@ A two-wheeled differential-drive robot car powered by an **ESP32-S3** microcontr
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                   HOST COMPUTER                     │
+│             HOST COMPUTER / RASPBERRY PI            │
 │                                                     │
-│  teleop_controller.py                               │
-│    ├── Keyboard capture (pynput / raw terminal)     │
-│    ├── Multi-key chord resolution (W+A → "WA")      │
-│    └── Rich live terminal dashboard                 │
-│              │                                      │
-│  serial_interface.py                                │
-│    ├── 20 Hz TX heartbeat thread  ──┐               │
-│    ├── RX telemetry parser thread   │               │
-│    └── Auto port detection          │               │
-│              │                      │               │
-│  telemetry_model.py                 │               │
-│    └── TELE: packet dataclass       │               │
-└──────────────┼──────────────────────┘               │
-               │  USB Serial (115200 baud)            │
-               │  CMD:WA,200\n  ↓↑  TELE:...          │
-┌──────────────┼──────────────────────────────────────┐
-│              │        ESP32-S3                      │
+│  test_robot.py / rasberrypi_host                    │
+│    ├── User target speed input (Left/Right m/s)     │
+│    ├── 20 Hz periodic command stream                │
+│    └── Serial communications interface              │
+└──────────────┬──────────────────────────────────────┘
+               │  UART / USB Serial (115200 baud)
+               │  <left_mps>,<right_mps>\n  ↓↑  Debug RPM
+┌──────────────┴──────────────────────────────────────┐
+│                    ESP32-S3                         │
 │                                                     │
-│  main.cpp                                           │
-│    ├── Serial packet parser (CMD:<DIR>,<SPEED>)     │
-│    ├── 350 ms safety watchdog                       │
-│    └── 20 Hz telemetry emitter                      │
+│  RobotController.ino                                │
+│    ├── SerialComms update & watchdog freshness      │
+│    ├── Velocity conversion: m/s → Target RPM        │
+│    └── 50 ms loop execution                         │
 │              │                                      │
-│  pid_controller.cpp                                 │
-│    ├── Drive state → motor PWM mapping              │
-│    ├── Straight-line encoder sync (Kp trimming)     │
-│    └── Arc-turn kinematics (⅓ inner wheel)          │
+│  SerialComms.cpp                                    │
+│    ├── Non-blocking stream parser                   │
+│    └── 500 ms safety timeout                        │
 │              │                                      │
-│  motor_driver.cpp                                   │
-│    ├── L298N H-bridge GPIO direction control        │
-│    ├── ESP32 LEDC PWM generation (20 kHz)           │
-│    └── Active electronic brake                      │
+│  WheelSpeedPID.cpp                                  │
+│    ├── Closed-loop discrete PID (Kp=2.0, Ki=0.5)    │
+│    ├── Anti-windup integral clamping                │
+│    └── Output PWM calculation (-255 to +255)        │
 │              │                                      │
-│  encoder.cpp                                        │
-│    ├── IRAM_ATTR ISRs on Phase A rising edges       │
-│    ├── Phase B direction detection                  │
-│    └── 50 ms rolling RPM calculation                │
+│  MotoController.cpp                                 │
+│    ├── L298N direction GPIO control                 │
+│    └── ESP32 LEDC PWM generation (20 kHz, 8-bit)    │
 │              │                                      │
-│  config.h                                           │
-│    └── All pin mappings, PWM, encoder, PID params   │
+│  EncoderReader.cpp                                  │
+│    ├── Hardware interrupt ISRs on encoder pins      │
+│    └── Cumulative tick counting                     │
+│              │                                      │
+│  Config.h                                           │
+│    └── All pinouts, wheel geometry, PID & UART cfg  │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -150,11 +144,11 @@ A two-wheeled differential-drive robot car powered by an **ESP32-S3** microcontr
 
 | Signal | ESP32-S3 GPIO | L298N Pin | Description |
 |---|---|---|---|
-| Left Motor PWM | **GPIO 9** | ENA | Speed control (remove ENA jumper!) |
-| Left Motor Dir 1 | **GPIO 8** | IN1 | Direction input 1 |
-| Left Motor Dir 2 | **GPIO 16** | IN2 | Direction input 2 |
-| Right Motor PWM | **GPIO 6** | ENB | Speed control (remove ENB jumper!) |
-| Right Motor Dir 1 | **GPIO 15** | IN3 | Direction input 3 |
+| Left Motor PWM | **GPIO 4** | ENA | Speed control via LEDC (remove ENA jumper!) |
+| Left Motor Dir 1 | **GPIO 6** | IN1 | Direction input 1 |
+| Left Motor Dir 2 | **GPIO 5** | IN2 | Direction input 2 |
+| Right Motor PWM | **GPIO 9** | ENB | Speed control via LEDC (remove ENB jumper!) |
+| Right Motor Dir 1 | **GPIO 8** | IN3 | Direction input 3 |
 | Right Motor Dir 2 | **GPIO 7** | IN4 | Direction input 4 |
 
 > **⚠️ Important**: Remove the black jumper caps from **ENA** and **ENB** on the L298N board. These jumpers bypass PWM speed control and lock motors to full speed.
@@ -163,9 +157,9 @@ A two-wheeled differential-drive robot car powered by an **ESP32-S3** microcontr
 
 | Signal | ESP32-S3 GPIO | Encoder Wire | Description |
 |---|---|---|---|
-| Left Encoder Phase A (C1) | **GPIO 4** | Channel A (Yellow) | Interrupt trigger (RISING) |
-| Left Encoder Phase B (C2) | **GPIO 5** | Channel B (Green) | Direction sensing |
-| Right Encoder Phase A (C1) | **GPIO 12** | Channel A (Yellow) | Interrupt trigger (RISING) |
+| Left Encoder Phase A (C1) | **GPIO 1** | Channel A (Yellow) | Interrupt trigger (`CHANGE`) |
+| Left Encoder Phase B (C2) | **GPIO 2** | Channel B (Green) | Direction sensing |
+| Right Encoder Phase A (C1) | **GPIO 12** | Channel A (Yellow) | Interrupt trigger (`CHANGE`) |
 | Right Encoder Phase B (C2) | **GPIO 13** | Channel B (Green) | Direction sensing |
 
 ### Power Connections
@@ -174,7 +168,7 @@ A two-wheeled differential-drive robot car powered by an **ESP32-S3** microcontr
 |---|---|
 | L298N 12V input | Battery pack positive (+) terminal |
 | L298N GND | Battery pack negative (−) terminal **AND** ESP32-S3 GND |
-| ESP32-S3 power | USB cable from host computer |
+| ESP32-S3 power | USB cable from host computer / 5V step-down regulator |
 | L298N OUT1/OUT2 | Left motor terminals |
 | L298N OUT3/OUT4 | Right motor terminals |
 
@@ -186,8 +180,8 @@ You can connect the Raspberry Pi 4B directly to the ESP32-S3 via the 40-pin GPIO
 
 | Raspberry Pi 4B Pin | Raspberry Pi Function | ESP32-S3 Pin | ESP32-S3 Function |
 |---|---|---|---|
-| **Pin 8** (GPIO 14) | UART0 TXD | **GPIO 18** | `PIN_UART_RPI_RX` (Receive) |
-| **Pin 10** (GPIO 15) | UART0 RXD | **GPIO 17** | `PIN_UART_RPI_TX` (Transmit) |
+| **Pin 8** (GPIO 14) | UART0 TXD | **GPIO 18** | `UART_RX_PIN` (Receive) |
+| **Pin 10** (GPIO 15) | UART0 RXD | **GPIO 17** | `UART_TX_PIN` (Transmit) |
 | **Pin 6 or 9** | GND | **GND** | Common Ground |
 
 > **⚠️ Critical Configuration on Raspberry Pi**:
@@ -233,42 +227,30 @@ The robot car uses 3 laser ToF distance sensors for front collision avoidance an
 
 ```
 CNL2/
-├── README.md                          # ← This file
+├── README.md                          # ← Project documentation and setup guide
 ├── .gitignore
 ├── raspberrypi_host                   # Symlink to rasberrypi_host
 │
-├── esp32_firmware/                    # ESP32-S3 C++ firmware
-│   ├── esp32_firmware.ino             # Arduino IDE entry point
-│   ├── platformio.ini                 # PlatformIO project config
-│   ├── src/                           # Source files (Arduino IDE compatible)
-│   │   ├── config.h                   #   Pin mappings, PWM, encoder, ToF, PID params
-│   │   ├── main.cpp                   #   Setup/loop, dual-serial parser, telemetry
-│   │   ├── motor_driver.h             #   MotorDriver class declaration
-│   │   ├── motor_driver.cpp           #   L298N H-bridge GPIO/PWM control
-│   │   ├── encoder.h                  #   EncoderManager class declaration
-│   │   ├── encoder.cpp                #   ISR-driven quadrature tick counting & RPM
-│   │   ├── pid_controller.h           #   RobotController class declaration
-│   │   ├── pid_controller.cpp         #   Drive state mapping, sync trim, arc turns
-│   │   ├── distance_sensors.h         #   DistanceSensors class declaration (3x VL53L0X)
-│   │   └── distance_sensors.cpp       #   Sequential XSHUT I2C init & continuous ranging
-│   ├── include/                       # PlatformIO include path (mirrors src/ headers)
-│   │   ├── config.h
-│   │   ├── encoder.h
-│   │   ├── motor_driver.h
-│   │   ├── pid_controller.h
-│   │   └── distance_sensors.h
-│   └── tests/                         # Standalone test sketches
-│       ├── distance_sensor_test.cpp
-│       ├── motor_driver_test.cpp
-│       └── vl53l0x_distance_sensors/  # Standalone 3x VL53L0X distance sensor test sketch
-│           └── vl53l0x_distance_sensors.ino
+├── RobotController/                   # ESP32-S3 closed-loop PID firmware (Arduino IDE)
+│   ├── RobotController.ino            # Main sketch (setup, 50 ms loop, velocity conversion)
+│   ├── Config.h                       # Pin assignments, wheel geometry, PID gains & timeouts
+│   ├── MotorController.h              # Motor driver interface
+│   ├── MotoController.cpp             # L298N direction & LEDC PWM implementation (20 kHz)
+│   ├── EncoderReader.h                # Interrupt-based encoder counter interface
+│   ├── EncoderReader.cpp              # Hardware interrupt ISRs (CHANGE) for ticks
+│   ├── WheelSpeedPID.h                # Discrete PID speed controller declaration
+│   ├── WheelSpeedPID.cpp              # Dual-wheel discrete PID with anti-windup clamping
+│   ├── SerialComms.h                  # UART packet receiver & watchdog declaration
+│   └── SerialComms.cpp                # Non-blocking newline parser & 500 ms safety timeout
+│
+├── test_robot.py                      # Standalone interactive Python test script (m/s velocity commands)
 │
 ├── teleop_host/                       # Standalone teleoperation & serial drivers (Python)
 │   ├── README.md
 │   ├── requirements.txt               # pyserial, pynput, rich
 │   ├── teleop_controller.py           # Standalone keyboard teleop controller
 │   ├── serial_interface.py            # Threaded serial TX/RX manager & heartbeat
-│   └── telemetry_model.py             # TELE: packet data model & parser
+│   └── telemetry_model.py             # Telemetry data model & parser
 │
 ├── rasberrypi_host/                   # Unified Autonomous & Teleop Robot Pipeline
 │   ├── master_controller.py           # ★ Central Master State Machine Controller (WASD + Nav + Follow)
@@ -312,7 +294,7 @@ cd CNL2
 
 ### 1. ESP32-S3 Firmware
 
-#### Option A: Arduino IDE 2.x (Recommended for beginners)
+#### Arduino IDE 2.x
 
 1. **Install the ESP32 board package**:
    - Open Arduino IDE → **File → Preferences**
@@ -320,30 +302,22 @@ cd CNL2
      ```
      https://espressif.github.io/arduino-esp32/package_esp32_index.json
      ```
-   - Go to **Tools → Board → Boards Manager** → Search `esp32` → Install **esp32 by Espressif Systems**
+   - Go to **Tools → Board → Boards Manager** → Search `esp32` → Install **esp32 by Espressif Systems** (version 3.x recommended)
 
 2. **Configure the board**:
    - **Tools → Board**: `ESP32S3 Dev Module`
    - **Tools → USB CDC On Boot**: `Enabled`
    - **Tools → USB Mode**: `Hardware CDC and JTAG`
    - **Tools → Upload Speed**: `921600`
-   - **Tools → Port**: Select your ESP32's USB port (e.g., `/dev/ttyACM0`)
+   - **Tools → Port**: Select your ESP32's USB port (e.g., `/dev/ttyACM0` or `/dev/ttyUSB0`)
 
 3. **Open and upload**:
-   - Open `esp32_firmware/esp32_firmware.ino` in Arduino IDE
+   - Open `RobotController/RobotController.ino` in Arduino IDE
    - Click **Upload** (→ button)
-   - Wait for "Done uploading" message
-
-#### Option B: PlatformIO (VS Code)
-
-1. Install the [PlatformIO IDE extension](https://platformio.org/install/ide?install=vscode) for VS Code
-
-2. Open the firmware folder and build:
-   ```bash
-   cd esp32_firmware
-   pio run --target upload
-   pio device monitor    # Optional: view serial output
-   ```
+   - Open the **Serial Monitor** at `115200 baud` to view debug RPM telemetry and confirm initialization:
+     ```
+     Robot controller initialized.
+     ```
 
 ---
 
@@ -447,55 +421,112 @@ The system launches an interactive live Rich dashboard. All driving commands rou
 | `S` + `D` | Reverse-Right Arc | Reverse arc turning right |
 | `Space` | Active Brake | Electronic brake — locks both wheels instantly |
 
+### Standalone Interactive Speed Test (`test_robot.py`)
+
+A script to directly test closed-loop velocity commands and PID motor response:
+
+```bash
+python3 test_robot.py
+```
+*(By default connects to `/dev/ttyACM0` at `115200` baud. Edit `SERIAL_PORT` in `test_robot.py` to `/dev/serial0` if connecting via Raspberry Pi GPIO UART).*
+
+- **Format**: Enter left and right speeds in m/s (e.g., `0.20,0.20` to drive forward, or `-0.15,0.15` to spin).
+- **Stop**: Type `stop` to halt both motors.
+- **Quit**: Type `q` to send zero speed and close the serial link.
+
 ---
 
-## Telemetry Protocol
+## Communication & Control Protocol
 
-### Host → ESP32 (Command Packets)
-```
-CMD:<DIRECTION>,<SPEED>\n
-CMD:LR,<LEFT_PWM>,<RIGHT_PWM>\n
-```
-| Format | Description | Example |
-|---|---|---|
-| `CMD:<DIR>,<SPEED>` | Directional drive & arc commands | `CMD:W,200\n`, `CMD:WA,200\n`, `CMD:B,0\n` |
-| `CMD:LR,<L>,<R>` | Differential drive from state machine (-255 to +255) | `CMD:LR,180,180\n`, `CMD:LR,140,210\n` |
+### Host → ESP32 (Velocity Commands)
 
-Example: `CMD:WA,200\n` → Forward-left arc at PWM 200
+Commands are sent across the serial connection as ASCII strings terminated by a newline (`\n`):
 
-### ESP32 → Host (Telemetry Packets)
 ```
-TELE:<rpmL>,<rpmR>,<ticksL>,<ticksR>,<state>,<flags>\n
+<left_mps>,<right_mps>\n
 ```
-| Field | Type | Description |
-|---|---|---|
-| rpmL | float | Left wheel RPM |
-| rpmR | float | Right wheel RPM |
-| ticksL | int64 | Left wheel cumulative encoder ticks |
-| ticksR | int64 | Right wheel cumulative encoder ticks |
-| state | string | Current drive state (`FWD`, `REV`, `LEFT`, `RIGHT`, `FWD_L`, `FWD_R`, `STOP`, `BRAKE`) |
-| flags | string | `OK` or `WDG` (watchdog tripped) |
 
-Example: `TELE:45.2,44.8,13200,13180,FWD,OK\n`
+| Field | Range | Description | Example |
+|---|---|---|---|
+| `left_mps` | `-2.0` to `+2.0` m/s | Target linear speed for left wheel | `0.20` |
+| `right_mps` | `-2.0` to `+2.0` m/s | Target linear speed for right wheel | `0.20` |
+
+**Examples:**
+- `0.20,0.20\n` → Drive forward at 0.20 m/s
+- `-0.20,-0.20\n` → Drive backward at 0.20 m/s
+- `0.0,0.0\n` or `stop` → Stop both motors
+- `0.20,-0.20\n` → Pivot turn clockwise
+
+> **⚠️ Watchdog Safety**: The ESP32 enforces a 500 ms safety timeout (`COMMAND_TIMEOUT_MS`). The host must continuously stream velocity packets (recommended rate: 20 Hz / 50 ms). If no valid command packet arrives within 500 ms, target velocities automatically drop to zero.
+
+### ESP32 → Host / USB Monitor (Debug Telemetry)
+
+The firmware outputs real-time RPM tracking over USB serial at the PID loop rate (20 Hz):
+
+```
+Target RPM: <target_left>, <target_right> | Actual RPM: <actual_left>, <actual_right>
+```
+
+Example:
+```
+Target RPM: 38.20, 38.20 | Actual RPM: 37.95, 38.10
+```
 
 ---
 
 ## Configuration Reference
 
-All firmware tuning parameters are in [`esp32_firmware/src/config.h`](esp32_firmware/src/config.h):
+All active firmware configuration constants are defined in [`RobotController/Config.h`](RobotController/Config.h):
 
-| Parameter | Default | Description |
+### Motor Driver Pinouts & PWM
+
+| Parameter | Value | Description |
 |---|---|---|
-| `DEFAULT_DRIVE_SPEED` | `200` | Default PWM when speed not specified (0–255) |
-| `DEFAULT_TURN_SPEED` | `180` | PWM for single-wheel pivot turns |
-| `PWM_FREQUENCY` | `20000` Hz | Ultrasonic PWM frequency (eliminates motor whine) |
-| `WHEEL_PULSES_PER_REV` | `330.0` | Pulses per full revolution (turn) of the wheel |
-| `SYNC_KP` | `0.5` | Straight-line proportional sync gain |
-| `MAX_SYNC_TRIM_PWM` | `40` | Maximum correction applied per wheel (±40 PWM) |
-| `WATCHDOG_TIMEOUT_MS` | `350` ms | Auto-stop if no command received within this window |
-| `TELEMETRY_INTERVAL_MS` | `50` ms | Telemetry broadcast interval (20 Hz) |
-| `INVERT_LEFT_ENCODER` | `true` | Flip left encoder counting direction |
-| `INVERT_RIGHT_ENCODER` | `false` | Flip right encoder counting direction |
+| `LEFT_MOTOR_IN1` | `GPIO 6` | Left motor direction pin 1 |
+| `LEFT_MOTOR_IN2` | `GPIO 5` | Left motor direction pin 2 |
+| `LEFT_MOTOR_PWM` | `GPIO 4` | Left motor PWM pin (LEDC speed control) |
+| `RIGHT_MOTOR_IN1` | `GPIO 8` | Right motor direction pin 1 |
+| `RIGHT_MOTOR_IN2` | `GPIO 7` | Right motor direction pin 2 |
+| `RIGHT_MOTOR_PWM` | `GPIO 9` | Right motor PWM pin (LEDC speed control) |
+| `MOTOR_PWM_FREQUENCY` | `20000` Hz (20 kHz) | Ultrasonic PWM frequency (eliminates audible motor whine) |
+| `MOTOR_PWM_RESOLUTION` | `8` bits | PWM resolution (0–255 duty cycle) |
+| `MOTOR_PWM_MAX` | `255` | Maximum clamped PWM value |
+
+### Quadrature Encoders
+
+| Parameter | Value | Description |
+|---|---|---|
+| `LEFT_ENCODER_A` | `GPIO 1` | Left encoder channel A (interrupt attached on `CHANGE`) |
+| `LEFT_ENCODER_B` | `GPIO 2` | Left encoder channel B (direction sensing) |
+| `RIGHT_ENCODER_A` | `GPIO 12` | Right encoder channel A (interrupt attached on `CHANGE`) |
+| `RIGHT_ENCODER_B` | `GPIO 13` | Right encoder channel B (direction sensing) |
+| `TICKS_PER_REVOLUTION` | `360.0f` | Encoder tick counts per single wheel revolution |
+
+### Wheel Geometry
+
+| Parameter | Value | Description |
+|---|---|---|
+| `WHEEL_RADIUS_M` | `0.05f` (5 cm) | Wheel radius in metres (converts linear m/s to angular RPM) |
+| `WHEEL_BASE_M` | `0.20f` (20 cm) | Track width / distance between left and right wheel centres |
+
+### Closed-Loop PID Speed Controller
+
+| Parameter | Value | Description |
+|---|---|---|
+| `PID_SAMPLE_TIME_MS` | `50` ms (20 Hz) | Discrete PID update and velocity calculation interval |
+| `PID_KP` | `2.0f` | Proportional gain |
+| `PID_KI` | `0.5f` | Integral gain (with anti-windup clamping) |
+| `PID_KD` | `0.0f` | Derivative gain |
+
+### UART Communication & Watchdog
+
+| Parameter | Value | Description |
+|---|---|---|
+| `UART_BAUD_RATE` | `115200` baud | Baud rate for Raspberry Pi UART link |
+| `UART_RX_PIN` | `GPIO 18` | ESP32 UART RX pin (connects to Raspberry Pi TX Pin 8) |
+| `UART_TX_PIN` | `GPIO 17` | ESP32 UART TX pin (connects to Raspberry Pi RX Pin 10) |
+| `COMMAND_TIMEOUT_MS` | `500` ms | Failsafe watchdog timeout (stops motors if link is lost) |
+| `TELEMETRY_INTERVAL_MS` | `100` ms | Serial telemetry broadcast interval |
 
 ---
 
@@ -511,26 +542,18 @@ All firmware tuning parameters are in [`esp32_firmware/src/config.h`](esp32_firm
 - Check that the battery pack is connected and charged (7–12V)
 - Confirm **common ground** between ESP32 and L298N
 
-### Robot drifts to one side during forward drive
-- The encoder sync should handle this automatically. If drift is severe:
-  - Increase `SYNC_KP` in `config.h` (try `1.0`)
-  - Increase `MAX_SYNC_TRIM_PWM` (try `60`)
-- If a wheel reads negative RPM when driving forward, toggle `INVERT_LEFT_ENCODER` or `INVERT_RIGHT_ENCODER` in `config.h`
+### Wheels spin in reverse or mismatched direction
+- If a motor rotates backward when positive speed is requested, swap the motor's `IN1` and `IN2` wires on the L298N terminals or swap `LEFT_MOTOR_IN1`/`IN2` (or `RIGHT_MOTOR_IN1`/`IN2`) in `Config.h`.
+- If encoder ticks count backward during forward motion, swap `Channel A` and `Channel B` encoder signal wires.
 
-### Dashboard shows "DISCONNECTED" or "WDG" (Watchdog Tripped)
-- The ESP32 may not be sending telemetry — open Arduino Serial Monitor at 115200 baud to verify
-- Check that the correct serial port is selected
-- Ensure no other program (Arduino Serial Monitor, screen, minicom) is holding the port open
+### Motors stop after ~500 ms (Watchdog Tripped)
+- The firmware includes a safety watchdog (`COMMAND_TIMEOUT_MS = 500`). The sender must periodically stream commands at ~20 Hz (e.g. using `test_robot.py` or the host controller loop).
 
 ### Permission denied on serial port
 ```bash
 sudo usermod -aG dialout $USER
 # Then log out and log back in
 ```
-
-### `pynput` import error in SSH / headless terminal
-- This is expected. The controller automatically falls back to raw terminal mode (`termios`/`tty`)
-- Multi-key detection still works via the 450 ms key-decay window
 
 ---
 
