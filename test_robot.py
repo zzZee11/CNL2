@@ -10,7 +10,11 @@ BAUD = 115200
 # Must match the ESP32 Config.h and your actual hardware.
 WHEEL_RADIUS_M = 0.020
 TICKS_PER_REV = 360.0  # Verify experimentally!
-MAX_SPEED_MPS = 0.15   # Start slowly for testing.
+
+# Startup push & cruise configuration:
+PUSH_SPEED_MPS = 0.80     # Max power speed demand (forces ESP32 PID output to 255 PWM)
+PUSH_DURATION_S = 0.18    # 180 ms high-torque kick to overcome static friction (stiction)
+DEFAULT_CRUISE_MPS = 0.20 # Normal intended cruising speed
 
 # Target distance tolerance.
 DISTANCE_TOLERANCE_M = 0.02
@@ -35,7 +39,7 @@ def read_uart():
 
             parts = line.split(",")
 
-            if len(parts) == 3 and parts[0] == "ENC":
+            if len(parts) >= 3 and parts[0] == "ENC":
                 with lock:
                     left_ticks = int(parts[1])
                     right_ticks = int(parts[2])
@@ -78,7 +82,7 @@ def wait_for_encoders(timeout=5):
     )
 
 
-def move(distance_m):
+def move(distance_m, cruise_speed=DEFAULT_CRUISE_MPS):
     """
     Positive distance = forward.
     Negative distance = reverse.
@@ -96,9 +100,11 @@ def move(distance_m):
     direction = 1 if distance_m > 0 else -1
 
     # Limit travel time in case an encoder fails.
-    timeout = max(5.0, abs(distance_m) / MAX_SPEED_MPS * 3)
+    timeout = max(5.0, abs(distance_m) / max(0.05, cruise_speed) * 3)
     start_time = time.monotonic()
     last_report = 0
+
+    print(f"\nMoving {distance_m:+.2f} m (Startup push -> Cruise at {cruise_speed:.2f} m/s)...")
 
     try:
         while True:
@@ -113,6 +119,7 @@ def move(distance_m):
             # Average the two wheel distances.
             travelled_ticks = (left_delta + right_delta) / 2
             travelled_m = travelled_ticks / ticks_per_metre
+            remaining_m = abs(distance_m) - travelled_m
 
             if travelled_m >= abs(distance_m) - DISTANCE_TOLERANCE_M:
                 break
@@ -122,14 +129,26 @@ def move(distance_m):
                     "Movement timed out. Check the wheels and encoders."
                 )
 
+            # --- DYNAMIC STARTUP PUSH & CRUISE CONTROL ---
+            elapsed = time.monotonic() - start_time
+            if elapsed < PUSH_DURATION_S and remaining_m > 0.04:
+                # 1. High-power startup push to break static friction (demands 255 PWM from PID)
+                current_speed = PUSH_SPEED_MPS
+            elif remaining_m < 0.04:
+                # 2. Smooth deceleration for the last 4 cm to prevent overshoot
+                current_speed = max(0.08, cruise_speed * (remaining_m / 0.04))
+            else:
+                # 3. Steady cruising speed
+                current_speed = cruise_speed
+
             # Refresh command faster than the ESP32 timeout.
             send_velocity(
-                direction * MAX_SPEED_MPS,
-                direction * MAX_SPEED_MPS,
+                direction * current_speed,
+                direction * current_speed,
             )
 
-            if time.monotonic() - last_report > 0.5:
-                print(f"Travelled: {travelled_m:.2f} m")
+            if time.monotonic() - last_report > 0.3:
+                print(f"  Travelled: {travelled_m:.2f} m / {abs(distance_m):.2f} m (Current: {current_speed:.2f} m/s)")
                 last_report = time.monotonic()
 
             time.sleep(0.05)
@@ -137,27 +156,31 @@ def move(distance_m):
     finally:
         stop()
 
-    print(f"Movement complete: approximately {travelled_m:.2f} m")
+    print(f"Movement complete: approximately {travelled_m:.2f} m\n")
 
 
 def main():
     print("Robot control ready.")
-    print("Commands: move 1 m | move -0.5 m | stop | quit")
+    print("Commands:")
+    print("  move <dist> m           e.g. 'move 1 m' or 'move -0.5 m'")
+    print("  move <dist> m <speed>   e.g. 'move 1 m 0.3' (custom cruise speed)")
+    print("  stop                    Stop immediately")
+    print("  quit                    Exit")
 
     try:
         while True:
             command = input("robot> ").strip().lower()
 
-            if command in ("quit", "exit"):
+            if command in ("quit", "exit", "q"):
                 break
 
-            if command == "stop":
+            if command in ("stop", "s"):
                 stop()
                 continue
 
             parts = command.split()
 
-            if len(parts) == 3 and parts[0] == "move":
+            if len(parts) >= 3 and parts[0] == "move":
                 try:
                     distance = float(parts[1])
 
@@ -165,7 +188,11 @@ def main():
                         print("Use metres, e.g. move 1 m")
                         continue
 
-                    move(distance)
+                    cruise = DEFAULT_CRUISE_MPS
+                    if len(parts) >= 4:
+                        cruise = float(parts[3])
+
+                    move(distance, cruise_speed=cruise)
 
                 except (ValueError, RuntimeError, TimeoutError) as exc:
                     stop()

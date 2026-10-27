@@ -36,6 +36,7 @@ class RobotComm:
         # Speed targets (m/s)
         self.target_left = 0.0
         self.target_right = 0.0
+        self.push_until = 0.0
         self.speed_lock = threading.Lock()
 
         # Telemetry from ESP32
@@ -77,12 +78,20 @@ class RobotComm:
         left = max(-MAX_SPEED_MPS, min(MAX_SPEED_MPS, float(left)))
         right = max(-MAX_SPEED_MPS, min(MAX_SPEED_MPS, float(right)))
         with self.speed_lock:
+            # Trigger a 180 ms startup kick if transitioning from 0 to break static friction
+            was_stopped = (abs(self.target_left) < 0.01 and abs(self.target_right) < 0.01)
+            is_moving = (abs(left) > 0.01 or abs(right) > 0.01)
+            if was_stopped and is_moving:
+                self.push_until = time.time() + 0.18
+
             self.target_left = left
             self.target_right = right
         print(f"-> Speed updated: Left = {left:+.2f} m/s, Right = {right:+.2f} m/s")
 
     def stop_motors(self):
         """Instantly set speeds to 0."""
+        with self.speed_lock:
+            self.push_until = 0.0
         self.set_speed(0.0, 0.0)
 
     def get_telemetry(self):
@@ -103,8 +112,17 @@ class RobotComm:
             with self.speed_lock:
                 l = self.target_left
                 r = self.target_right
+                push_active = time.time() < self.push_until
 
-            msg = f"{l:.2f},{r:.2f}\n".encode("ascii")
+            # Provide initial push at 0.80 m/s (demands 255 PWM max power) then reduce to intended speed
+            if push_active:
+                out_l = (0.80 if l > 0 else -0.80) if abs(l) > 0.01 else 0.0
+                out_r = (0.80 if r > 0 else -0.80) if abs(r) > 0.01 else 0.0
+            else:
+                out_l = l
+                out_r = r
+
+            msg = f"{out_l:.2f},{out_r:.2f}\n".encode("ascii")
             try:
                 if self.ser and self.ser.is_open:
                     self.ser.write(msg)
