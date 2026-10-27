@@ -46,7 +46,7 @@ from telemetry_model import TelemetryData
 
 # A* Search & Kinematics
 try:
-    from a_search_main import (
+    from legacy_files.a_search_main import (
         create_empty_grid, astar_grid, is_path_blocked, mark_obstacle,
         world_to_grid, calculate_apf, calculate_kinematics, SENSOR_ANGLES,
     )
@@ -57,7 +57,7 @@ except Exception as e:
 # Vision Pipeline Bridge
 try:
     from config import Config
-    from vision_bridge import VisionBridge, make_target_fn, make_stop_fn
+    from legacy_files.vision_bridge import VisionBridge, make_target_fn, make_stop_fn
     HAVE_VISION = True
 except Exception:
     HAVE_VISION = False

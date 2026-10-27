@@ -29,8 +29,8 @@ TICKS_PER_REV = 360.0         # Measured encoder counts per single wheel turn
 # Breakaway torque boost to overcome L298N & gearbox static friction
 STARTUP_PUSH_SPEED = 0.85     # Max power speed demand (m/s) -> saturates ESP32 PID output to 255 PWM
 STARTUP_PUSH_DURATION_S = 0.18 # 180 ms startup kick
-DEFAULT_SPEED = 0.80          # Default cruising speed (m/s)
-MAX_ALLOWED_SPEED = 1.00      # Safety clamp
+DEFAULT_SPEED = 0.90          # Default cruising speed (m/s)
+MAX_ALLOWED_SPEED = 1.2      # Safety clamp
 MIN_MANEUVER_SPEED = 0.12     # Minimum turning/creeping speed
 
 # ==========================================

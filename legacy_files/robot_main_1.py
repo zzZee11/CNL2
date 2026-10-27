@@ -24,7 +24,7 @@ for _p in (str(_this_dir), str(_this_dir.parent)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from a_search_main import (
+from legacy_files.a_search_main import (
     create_empty_grid, astar_grid, is_path_blocked, mark_obstacle,
     world_to_grid, calculate_apf, calculate_kinematics, SENSOR_ANGLES,
 )
@@ -290,7 +290,7 @@ def build_vision(link):
     sys.path.insert(0, str(vision_dir))
     try:
         from config import Config
-        from vision_bridge import VisionBridge, make_target_fn, make_stop_fn
+        from legacy_files.vision_bridge import VisionBridge, make_target_fn, make_stop_fn
         models_dir = vision_dir / "models"
         # Prefer lightweight detect.tflite on Raspberry Pi (runs at 15-25 FPS with ~3MB runtime)
         model_file = (
@@ -324,5 +324,5 @@ def main():
 
 
 if __name__ == "__main__":
-    from master_controller import main as master_main
+    from legacy_files.master_controller import main as master_main
     master_main()
