@@ -1,0 +1,102 @@
+
+import time
+import board
+import busio
+from gpiozero import DigitalOutputDevice
+import adafruit_vl53l0x
+
+# Raspberry Pi GPIO pins (BCM numbering)
+XSHUT_LEFT = 17
+XSHUT_MIDDLE = 22
+XSHUT_RIGHT = 27
+
+# Unique I2C addresses
+ADDR_LEFT = 0x30
+ADDR_MIDDLE = 0x31
+ADDR_RIGHT = 0x32
+
+# Create XSHUT controls; LOW holds each sensor in shutdown.
+left_xshut = DigitalOutputDevice(
+    XSHUT_LEFT, initial_value=False
+)
+middle_xshut = DigitalOutputDevice(
+    XSHUT_MIDDLE, initial_value=False
+)
+right_xshut = DigitalOutputDevice(
+    XSHUT_RIGHT, initial_value=False
+)
+
+sensors = []
+
+def initialize_sensor(name, xshut, address):
+    xshut.on()
+    time.sleep(0.1)
+
+    # Sensor starts at 0x29, then receives a unique address.
+    sensor = adafruit_vl53l0x.VL53L0X(i2c)
+    sensor.set_address(address)
+
+    print(f"{name}: initialized at 0x{address:02X}")
+    return sensor
+
+
+try:
+    # Use Raspberry Pi GPIO header I2C (bus 1).
+    i2c = busio.I2C(board.SCL, board.SDA)
+
+    # Ensure all sensors are disabled before starting.
+    left_xshut.off()
+    middle_xshut.off()
+    right_xshut.off()
+    time.sleep(0.1)
+
+    left_sensor = initialize_sensor(
+        "Left", left_xshut, ADDR_LEFT
+    )
+    sensors.append(left_sensor)
+
+    middle_sensor = initialize_sensor(
+        "Middle", middle_xshut, ADDR_MIDDLE
+    )
+    sensors.append(middle_sensor)
+
+    right_sensor = initialize_sensor(
+        "Right", right_xshut, ADDR_RIGHT
+    )
+    sensors.append(right_sensor)
+
+    print("\nAll sensors initialized. Press Ctrl+C to stop.\n")
+
+    while True:
+        for name, sensor in (
+            ("Left", left_sensor),
+            ("Middle", middle_sensor),
+            ("Right", right_sensor),
+        ):
+            try:
+                distance_mm = sensor.range
+
+                lower = max(0, int(distance_mm) - 10)
+                upper = int(distance_mm) + 10
+
+                print(
+                    f"{name}: {lower} - {upper} mm "
+                    f"(measured {distance_mm} mm)"
+                )
+            except (OSError, RuntimeError) as error:
+                print(f"{name}: reading error: {error}")
+
+        print("-" * 40)
+        time.sleep(0.5)
+
+except KeyboardInterrupt:
+    print("\nStopping sensor readings.")
+
+except Exception as error:
+    print(f"\nError: {error}")
+    print("Check I2C bus 1, XSHUT wiring, and sensor power.")
+
+finally:
+    left_xshut.close()
+    middle_xshut.close()
+    right_xshut.close()

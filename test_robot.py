@@ -14,7 +14,7 @@ TICKS_PER_REV = 360.0  # Verify experimentally!
 # Startup push & cruise configuration:
 PUSH_SPEED_MPS = 0.80     # Max power speed demand (forces ESP32 PID output to 255 PWM)
 PUSH_DURATION_S = 0.18    # 180 ms high-torque kick to overcome static friction (stiction)
-DEFAULT_CRUISE_MPS = 0.20 # Normal intended cruising speed
+DEFAULT_CRUISE_MPS = 0.60 # Normal intended cruising speed
 
 # Target distance tolerance.
 DISTANCE_TOLERANCE_M = 0.02
