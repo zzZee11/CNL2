@@ -110,12 +110,17 @@ float WheelSpeedPID::calculatePID(
 ) {
     float error = targetRPM - actualRPM;
 
+    // Accumulate integral with anti-windup clamping to full PWM authority
     integral += error * dt;
 
-    // Limit integral accumulation.
-    integral = constrain(integral, -100.0f, 100.0f);
+    if (_ki > 0.0f) {
+        float maxIntegral = static_cast<float>(MOTOR_PWM_MAX) / _ki;
+        integral = constrain(integral, -maxIntegral, maxIntegral);
+    } else {
+        integral = 0.0f;
+    }
 
-    float derivative = (error - previousError) / dt;
+    float derivative = (dt > 0.0f) ? ((error - previousError) / dt) : 0.0f;
 
     float output =
         (_kp * error) +

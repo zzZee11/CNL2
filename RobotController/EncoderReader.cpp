@@ -31,8 +31,12 @@ void EncoderReader::begin() {
 void IRAM_ATTR EncoderReader::leftEncoderISR() {
     portENTER_CRITICAL_ISR(&encoderMux);
 
-    if (digitalRead(LEFT_ENCODER_A) ==
-        digitalRead(LEFT_ENCODER_B)) {
+    bool forward = (digitalRead(LEFT_ENCODER_A) == digitalRead(LEFT_ENCODER_B));
+    if (INVERT_LEFT_ENCODER) {
+        forward = !forward;
+    }
+
+    if (forward) {
         _leftTicks++;
     } else {
         _leftTicks--;
@@ -44,8 +48,12 @@ void IRAM_ATTR EncoderReader::leftEncoderISR() {
 void IRAM_ATTR EncoderReader::rightEncoderISR() {
     portENTER_CRITICAL_ISR(&encoderMux);
 
-    if (digitalRead(RIGHT_ENCODER_A) ==
-        digitalRead(RIGHT_ENCODER_B)) {
+    bool forward = (digitalRead(RIGHT_ENCODER_A) == digitalRead(RIGHT_ENCODER_B));
+    if (INVERT_RIGHT_ENCODER) {
+        forward = !forward;
+    }
+
+    if (forward) {
         _rightTicks++;
     } else {
         _rightTicks--;

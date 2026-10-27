@@ -12,24 +12,28 @@
 constexpr int LEFT_MOTOR_IN1 = 6;
 constexpr int LEFT_MOTOR_IN2 = 5;
 constexpr int LEFT_MOTOR_PWM = 4;
+constexpr bool INVERT_LEFT_MOTOR = true;
 
 // Right motor
 constexpr int RIGHT_MOTOR_IN1 = 8;
 constexpr int RIGHT_MOTOR_IN2 = 7;
 constexpr int RIGHT_MOTOR_PWM = 9;
+constexpr bool INVERT_RIGHT_MOTOR = false;
 
 
 // ==========================================
-// ENCODER PINS
+// ENCODER PINS & INVERSION
 // ==========================================
 
 // Left encoder
 constexpr int LEFT_ENCODER_A = 1;
 constexpr int LEFT_ENCODER_B = 2;
+constexpr bool INVERT_LEFT_ENCODER = false;
 
 // Right encoder
 constexpr int RIGHT_ENCODER_A = 12;
 constexpr int RIGHT_ENCODER_B = 13;
+constexpr bool INVERT_RIGHT_ENCODER = false;
 
 
 // ==========================================

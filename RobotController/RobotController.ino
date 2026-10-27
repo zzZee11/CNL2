@@ -93,7 +93,7 @@ void loop() {
             static_cast<int>(speedPID.getLeftOutput()),
             static_cast<int>(speedPID.getRightOutput())
         );
-        // Send encoder counts to Raspberry Pi at regular intervals.
+    // Send encoder counts and RPM to Raspberry Pi at regular intervals (20 Hz).
     static uint32_t lastTelemetryMs = 0;
 
     if (millis() - lastTelemetryMs >= 50) {
@@ -102,7 +102,11 @@ void loop() {
         Serial1.print("ENC,");
         Serial1.print(encoders.getLeftTicks());
         Serial1.print(",");
-        Serial1.println(encoders.getRightTicks());
+        Serial1.print(encoders.getRightTicks());
+        Serial1.print(",");
+        Serial1.print(speedPID.getLeftRPM(), 1);
+        Serial1.print(",");
+        Serial1.println(speedPID.getRightRPM(), 1);
     }
 
         // Optional USB debugging.

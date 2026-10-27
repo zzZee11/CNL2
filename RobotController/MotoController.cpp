@@ -27,6 +27,13 @@ bool MotorController::begin() {
 }
 
 void MotorController::setSpeeds(int leftSpeed, int rightSpeed) {
+    if (INVERT_LEFT_MOTOR) {
+        leftSpeed = -leftSpeed;
+    }
+    if (INVERT_RIGHT_MOTOR) {
+        rightSpeed = -rightSpeed;
+    }
+
     setMotor(
         LEFT_MOTOR_IN1,
         LEFT_MOTOR_IN2,
