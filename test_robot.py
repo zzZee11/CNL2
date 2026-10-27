@@ -3,7 +3,7 @@ import serial
 import time
 
 # Change this if your Raspberry Pi uses a different UART device.
-SERIAL_PORT = "/dev/serial0"
+SERIAL_PORT = "/dev/ttyACM0"
 BAUD_RATE = 115200
 
 SEND_INTERVAL = 0.05  # 20 Hz

@@ -9,14 +9,14 @@
 // ==========================================
 
 // Left motor
-constexpr int LEFT_MOTOR_IN1 = 25;
-constexpr int LEFT_MOTOR_IN2 = 26;
-constexpr int LEFT_MOTOR_PWM = 27;
+constexpr int LEFT_MOTOR_IN1 = 6;
+constexpr int LEFT_MOTOR_IN2 = 5;
+constexpr int LEFT_MOTOR_PWM = 4;
 
 // Right motor
-constexpr int RIGHT_MOTOR_IN1 = 32;
-constexpr int RIGHT_MOTOR_IN2 = 33;
-constexpr int RIGHT_MOTOR_PWM = 23;
+constexpr int RIGHT_MOTOR_IN1 = 8;
+constexpr int RIGHT_MOTOR_IN2 = 7;
+constexpr int RIGHT_MOTOR_PWM = 9;
 
 
 // ==========================================
@@ -24,12 +24,12 @@ constexpr int RIGHT_MOTOR_PWM = 23;
 // ==========================================
 
 // Left encoder
-constexpr int LEFT_ENCODER_A = 18;
-constexpr int LEFT_ENCODER_B = 19;
+constexpr int LEFT_ENCODER_A = 1;
+constexpr int LEFT_ENCODER_B = 2;
 
 // Right encoder
-constexpr int RIGHT_ENCODER_A = 21;
-constexpr int RIGHT_ENCODER_B = 22;
+constexpr int RIGHT_ENCODER_A = 12;
+constexpr int RIGHT_ENCODER_B = 13;
 
 
 // ==========================================
@@ -37,10 +37,10 @@ constexpr int RIGHT_ENCODER_B = 22;
 // ==========================================
 
 // Wheel radius in metres
-constexpr float WHEEL_RADIUS_M = 0.05f;
+constexpr float WHEEL_RADIUS_M = 0.02f;
 
 // Distance between left and right wheel centres
-constexpr float WHEEL_BASE_M = 0.20f;
+constexpr float WHEEL_BASE_M = 0.13f;
 
 // Actual encoder counts per wheel revolution.
 // IMPORTANT: Replace with your measured value.
@@ -78,7 +78,7 @@ constexpr int MOTOR_PWM_MAX = 255;
 constexpr uint32_t UART_BAUD_RATE = 115200;
 
 // Example UART pins; verify against your board.
-constexpr int UART_RX_PIN = 16;
+constexpr int UART_RX_PIN = 18;
 constexpr int UART_TX_PIN = 17;
 
 // Stop accepting stale commands after this interval.
