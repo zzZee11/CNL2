@@ -105,10 +105,11 @@ python3 -m venv vision_env --system-site-packages
 source vision_env/bin/activate
 ```
 
-### Step 3: Install Lightweight TFLite Runtime
+### Step 3: Install Lightweight TFLite Runtime (LiteRT)
 ```bash
-pip install tflite-runtime --extra-index-url https://google-coral.github.io/py-repo/
+pip install ai-edge-litert
 ```
+*(Note: `ai-edge-litert` is Google's official updated package for TFLite runtime on Python 3.11/3.12 64-bit ARM).*
 
 ### Step 4: Model File Placement
 The detector automatically searches for `detect.tflite` in `vision/models/` or the existing repo models. To copy the model into `vision/models/`:

@@ -87,18 +87,23 @@ class TFLiteDetector(HumanDetector):
 
         Interpreter = None
         try:
-            from tflite_runtime.interpreter import Interpreter
+            from ai_edge_litert.interpreter import Interpreter
         except ImportError:
             try:
-                from tensorflow.lite.python.interpreter import Interpreter
+                from tflite_runtime.interpreter import Interpreter
             except ImportError:
-                pass
+                try:
+                    from tensorflow.lite.python.interpreter import Interpreter
+                except ImportError:
+                    pass
 
         if Interpreter is None:
             raise ImportError(
-                "Neither 'tflite-runtime' nor 'tensorflow' is installed.\n"
-                "To install the lightweight TFLite runtime on Raspberry Pi:\n"
-                "    pip3 install tflite-runtime --extra-index-url https://google-coral.github.io/py-repo/"
+                "No TFLite / LiteRT runtime found.\n"
+                "On 64-bit Raspberry Pi OS (Python 3.11+), install:\n"
+                "    pip install ai-edge-litert\n"
+                "Or run in mock mode for testing without models:\n"
+                "    python3 vision/main.py --mock"
             )
 
         self._interpreter = Interpreter(
