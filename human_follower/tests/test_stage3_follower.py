@@ -1,0 +1,146 @@
+"""
+Unit tests for human_follower/stage3_follower.py (Stage 3 Human Follower with APF Obstacle Avoidance).
+"""
+
+import time
+import unittest
+from human_follower.stage3_follower import Stage3Config, Stage3ObstacleFollower
+from vision.target_data import TargetObservation
+
+
+class TestStage3Follower(unittest.TestCase):
+    def setUp(self):
+        self.config = Stage3Config(
+            mock=True,
+            headless=True,
+            target_distance_m=1.20,
+            distance_deadband_m=0.20,
+            emergency_stop_dist_m=0.35,
+            obstacle_safe_dist_m=0.65,
+            min_forward_speed=0.15,
+            max_forward_speed=0.40,
+            k_rep=0.25,
+            target_timeout_s=1.0,
+        )
+        self.follower = Stage3ObstacleFollower(self.config)
+
+    def tearDown(self):
+        self.follower.stop()
+
+    def test_sweet_spot_holding(self):
+        # Target inside sweet spot (1.20m, centered), no obstacles -> Motors completely stopped
+        t0 = time.monotonic()
+        obs = TargetObservation(
+            target_valid=True,
+            confidence=0.90,
+            horizontal_error=0.02,
+            distance=1.20,
+            timestamp=t0,
+        )
+        vl, vr, state = self.follower.step(obs, mock_tofs=(9.99, 1.20, 9.99))
+
+        self.assertEqual(state, "HOLD_SWEET_SPOT")
+        self.assertEqual(vl, 0.0)
+        self.assertEqual(vr, 0.0)
+
+    def test_clear_path_following_straight(self):
+        # Target walking away (1.80m, centered), no obstacles (9.99m) -> Drives straight forward
+        t0 = time.monotonic()
+        obs = TargetObservation(
+            target_valid=True,
+            confidence=0.90,
+            horizontal_error=0.02,
+            distance=1.80,
+            timestamp=t0,
+        )
+        vl, vr, state = self.follower.step(obs, mock_tofs=(9.99, 1.80, 9.99))
+
+        self.assertEqual(state, "FOLLOW_STRAIGHT")
+        self.assertGreater(vl, 0.0)
+        self.assertGreater(vr, 0.0)
+        self.assertAlmostEqual(vl, vr, places=3)
+
+    def test_left_obstacle_evasion(self):
+        # Human straight ahead at 1.80m, obstacle on the left (left ToF = 0.45m < 0.65m safe dist)
+        # Left obstacle should push robot to the right: Left wheel moves faster than right wheel
+        t0 = time.monotonic()
+        obs = TargetObservation(
+            target_valid=True,
+            confidence=0.90,
+            horizontal_error=0.0,
+            distance=1.80,
+            timestamp=t0,
+        )
+        vl, vr, state = self.follower.step(obs, mock_tofs=(0.45, 1.80, 9.99))
+
+        self.assertEqual(state, "AVOIDING_OBSTACLE_RIGHT")
+        self.assertGreater(vl, 0.0)
+        self.assertGreater(vl, vr)  # Curves right to avoid left obstacle
+
+    def test_right_obstacle_evasion(self):
+        # Human straight ahead at 1.80m, obstacle on the right (right ToF = 0.45m < 0.65m safe dist)
+        # Right obstacle should push robot to the left: Right wheel moves faster than left wheel
+        t0 = time.monotonic()
+        obs = TargetObservation(
+            target_valid=True,
+            confidence=0.90,
+            horizontal_error=0.0,
+            distance=1.80,
+            timestamp=t0,
+        )
+        vl, vr, state = self.follower.step(obs, mock_tofs=(9.99, 1.80, 0.45))
+
+        self.assertEqual(state, "AVOIDING_OBSTACLE_LEFT")
+        self.assertGreater(vr, 0.0)
+        self.assertGreater(vr, vl)  # Curves left to avoid right obstacle
+
+    def test_human_disambiguation_no_repulsion(self):
+        # Human is at 1.20m directly in front. The middle sensor sees 1.20m.
+        # This is the target person, so APF should NOT generate repulsive force against the user.
+        t0 = time.monotonic()
+        obs = TargetObservation(
+            target_valid=True,
+            confidence=0.90,
+            horizontal_error=0.02,
+            distance=1.20,
+            timestamp=t0,
+        )
+        f_att, f_rep, f_net = self.follower.calculate_apf(
+            obs, dist_m=1.20, left_dist=9.99, mid_dist=1.20, right_dist=9.99
+        )
+        # Repulsive force should be zero
+        self.assertEqual(f_rep, (0.0, 0.0))
+
+    def test_emergency_stop_when_hazard_too_close(self):
+        # An obstacle is dangerously close (0.25m < 0.35m emergency stop threshold) -> Immediate halt
+        t0 = time.monotonic()
+        obs = TargetObservation(
+            target_valid=True,
+            confidence=0.90,
+            horizontal_error=0.0,
+            distance=1.50,
+            timestamp=t0,
+        )
+        vl, vr, state = self.follower.step(obs, mock_tofs=(0.25, 9.99, 9.99))
+
+        self.assertEqual(state, "SAFETY_STOP")
+        self.assertEqual(vl, 0.0)
+        self.assertEqual(vr, 0.0)
+
+    def test_full_lifecycle(self):
+        self.assertTrue(self.follower.start())
+        time.sleep(0.3)
+        telem = self.follower.get_telemetry()
+        self.assertIn("state", telem)
+        self.assertIn("f_att", telem)
+        self.assertIn("f_rep", telem)
+        self.assertIn("f_net", telem)
+        self.assertIn("v_left", telem)
+        self.assertIn("v_right", telem)
+        self.follower.stop()
+        self.assertEqual(self.follower.state, "STOPPED")
+
+
+if __name__ == "__main__":
+    unittest.main()
+
