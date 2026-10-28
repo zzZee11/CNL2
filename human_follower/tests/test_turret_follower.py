@@ -52,8 +52,12 @@ class TestTurretFollower(unittest.TestCase):
         vl, vr, state = self.follower.step(obs)
 
         self.assertEqual(state, "PIVOT_RIGHT")
-        self.assertAlmostEqual(vl, +0.20, places=3)
-        self.assertAlmostEqual(vr, -0.20, places=3)
+        self.assertGreater(vl, 0.0)  # Left wheel drives forward
+        self.assertLess(vr, 0.0)     # Right wheel drives backward
+        self.assertAlmostEqual(vl, -vr, places=4)
+        # Verify clamped within min and max
+        self.assertGreaterEqual(vl, self.config.min_turn_speed)
+        self.assertLessEqual(vl, self.config.max_turn_speed)
 
     def test_pivot_left_when_target_on_left(self):
         # Target to the left (h_err = -0.45 < -0.08)
@@ -67,8 +71,12 @@ class TestTurretFollower(unittest.TestCase):
         vl, vr, state = self.follower.step(obs)
 
         self.assertEqual(state, "PIVOT_LEFT")
-        self.assertAlmostEqual(vl, -0.20, places=3)
-        self.assertAlmostEqual(vr, +0.20, places=3)
+        self.assertLess(vl, 0.0)     # Left wheel drives backward
+        self.assertGreater(vr, 0.0)  # Right wheel drives forward
+        self.assertAlmostEqual(-vl, vr, places=4)
+        # Verify clamped
+        self.assertGreaterEqual(vr, self.config.min_turn_speed)
+        self.assertLessEqual(vr, self.config.max_turn_speed)
 
     def test_target_lost_safety_stop(self):
         # Invalid target -> safe stop
