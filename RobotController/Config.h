@@ -48,7 +48,7 @@ constexpr float WHEEL_BASE_M = 0.13f;
 
 // Actual encoder counts per wheel revolution.
 // IMPORTANT: Replace with your measured value.
-constexpr float TICKS_PER_REVOLUTION = 360.0f;
+constexpr float TICKS_PER_REVOLUTION = 720.0f;
 
 
 // ==========================================
