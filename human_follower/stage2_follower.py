@@ -59,9 +59,19 @@ class Stage2Config:
     enable_forward_kick: bool = True
     forward_kick_speed: float = 0.50
     forward_kick_duration_s: float = 0.12
+
+    # ── Smooth Stop & Acceleration Ramping ────────────────────────────────────
+    enable_smooth_stop: bool = True     # Soft deceleration ramp when stopping or changing speeds
+    max_accel_mps2: float = 0.80        # Slew-rate acceleration limit (m/s^2)
+    max_decel_mps2: float = 0.60        # Slew-rate deceleration limit (m/s^2) for silky-smooth stops
+
+    # ── Smart Target Recovery (Search in Last Moved Direction) ────────────────
+    enable_search_recovery: bool = True # Turn in last known direction instead of stopping blind
+    search_turn_speed: float = 0.15     # Gentle pivot speed while searching (m/s)
+    search_duration_s: float = 2.0      # How long to sweep in the last direction before giving up (seconds)
     
     # ── Safety & Timeouts ─────────────────────────────────────────────────────
-    target_timeout_s: float = 1.0      # If target is lost for > 1.0s, decelerate to 0
+    target_timeout_s: float = 1.0      # If target is lost for > 1.0s, begin search recovery or decelerate to 0
     confidence_threshold: float = 0.40 # Minimum detection confidence
     
     # ── Hardware & Camera Settings ────────────────────────────────────────────
@@ -109,6 +119,10 @@ class Stage2DistanceFollower:
         self._is_steering: bool = False
         self._last_h_err: float = 0.0
         self._last_h_err_time: float = 0.0
+
+        # Smart target recovery tracking (memory of last seen position)
+        self._last_seen_direction: Optional[str] = None
+        self._last_seen_time: float = 0.0
 
         # Subsystem 1: Vision Service
         v_config = VisionConfig(
@@ -172,8 +186,13 @@ class Stage2DistanceFollower:
             self._ser = None
 
     def _serial_tx_worker(self) -> None:
-        """Continuously streams velocity packets at 20 Hz to refresh ESP32 watchdog."""
+        """Continuously streams velocity packets at 20 Hz with smooth acceleration and deceleration ramping."""
         interval = 1.0 / self.config.tx_rate_hz
+        max_delta_accel = self.config.max_accel_mps2 * interval
+        max_delta_decel = self.config.max_decel_mps2 * interval
+
+        current_cmd_l = 0.0
+        current_cmd_r = 0.0
 
         while self._running:
             t0 = time.monotonic()
@@ -186,15 +205,36 @@ class Stage2DistanceFollower:
             # Apply forward breakaway kick if active
             if is_kicking:
                 kick = self.config.forward_kick_speed
-                cmd_l = kick if vl > 0.05 else vl
-                cmd_r = kick if vr > 0.05 else vr
+                target_l = kick if vl > 0.05 else vl
+                target_r = kick if vr > 0.05 else vr
             else:
-                cmd_l = vl
-                cmd_r = vr
+                target_l = vl
+                target_r = vr
+
+            # Smooth Acceleration and Deceleration Slew-Rate Limiting:
+            # When speeding up (target > current), use max_delta_accel
+            # When slowing down / stopping (target < current), use max_delta_decel for a silky-smooth glide
+            if self.config.enable_smooth_stop:
+                # Left wheel
+                diff_l = target_l - current_cmd_l
+                if diff_l > 0:
+                    current_cmd_l += min(diff_l, max_delta_accel)
+                else:
+                    current_cmd_l -= min(-diff_l, max_delta_decel)
+
+                # Right wheel
+                diff_r = target_r - current_cmd_r
+                if diff_r > 0:
+                    current_cmd_r += min(diff_r, max_delta_accel)
+                else:
+                    current_cmd_r -= min(-diff_r, max_delta_decel)
+            else:
+                current_cmd_l = target_l
+                current_cmd_r = target_r
 
             if self._ser is not None:
                 try:
-                    packet = f"{cmd_l:.2f},{cmd_r:.2f}\n".encode("ascii")
+                    packet = f"{current_cmd_l:.2f},{current_cmd_r:.2f}\n".encode("ascii")
                     self._ser.write(packet)
                     self._ser.flush()
                 except Exception:
@@ -253,12 +293,38 @@ class Stage2DistanceFollower:
         # Check target freshness and validity
         is_fresh = (now - obs.timestamp) <= self.config.target_timeout_s
         if not obs.target_valid or not is_fresh or obs.confidence < self.config.confidence_threshold:
-            self._set_wheel_velocities(0.0, 0.0)
             self._is_steering = False
             self._last_h_err = 0.0
             self._last_h_err_time = now
+
+            # Smart target recovery: sweep gently in the direction the person was last seen
+            elapsed_lost = now - self._last_seen_time
+            if (
+                self.config.enable_search_recovery
+                and self._last_seen_direction is not None
+                and elapsed_lost <= self.config.search_duration_s
+            ):
+                search_speed = self.config.search_turn_speed
+                if self._last_seen_direction == "RIGHT":
+                    vl = +search_speed
+                    vr = -search_speed
+                    self.state = "SEARCH_RECOVERY_RIGHT"
+                else:
+                    vl = -search_speed
+                    vr = +search_speed
+                    self.state = "SEARCH_RECOVERY_LEFT"
+                self._set_wheel_velocities(vl, vr)
+                return vl, vr, self.state
+
+            # Search expired or no last direction: smooth halt
+            self._set_wheel_velocities(0.0, 0.0)
             self.state = "SEARCHING"
             return 0.0, 0.0, self.state
+
+        # Remember last seen direction for smart target recovery if target is lost
+        if abs(obs.horizontal_error) > 0.05:
+            self._last_seen_direction = "RIGHT" if obs.horizontal_error > 0 else "LEFT"
+        self._last_seen_time = now
 
         # Get ToF distance readings [left, middle, right]
         if mock_mid_tof is not None:
@@ -383,6 +449,7 @@ class Stage2DistanceFollower:
                 "bearing_deg": round(obs.bearing_deg, 1),
                 "confidence": round(obs.confidence, 2),
                 "target_valid": obs.target_valid,
+                "bbox": list(obs.bbox) if (obs.target_valid and obs.bbox is not None) else None,
                 "fps": v_telem.get("fps", 0.0),
                 "inf_ms": v_telem.get("inference_ms", 0.0),
             }

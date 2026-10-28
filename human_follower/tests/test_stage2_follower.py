@@ -104,6 +104,33 @@ class TestStage2Follower(unittest.TestCase):
         self.assertEqual(vl, 0.0)
         self.assertEqual(vr, 0.0)
 
+    def test_search_recovery_when_target_lost(self):
+        t0 = time.monotonic()
+        # 1. Target was previously seen moving to the right
+        obs_seen = TargetObservation(
+            target_valid=True,
+            confidence=0.90,
+            horizontal_error=+0.30,
+            distance=1.60,
+            timestamp=t0,
+        )
+        self.follower.step(obs_seen, mock_mid_tof=1.60)
+
+        # 2. Target suddenly lost -> Robot sweeps right to find target
+        obs_lost = TargetObservation.invalid(timestamp=t0 + 0.1)
+        vl, vr, state = self.follower.step(obs_lost, mock_mid_tof=1.60)
+        self.assertEqual(state, "SEARCH_RECOVERY_RIGHT")
+        self.assertGreater(vl, 0.0)
+        self.assertLess(vr, 0.0)
+
+        # 3. After search_duration_s (2.0s) without reacquiring, robot halts
+        self.follower._last_seen_time = time.monotonic() - 3.0
+        obs_expired = TargetObservation.invalid(timestamp=time.monotonic())
+        vl, vr, state = self.follower.step(obs_expired, mock_mid_tof=1.60)
+        self.assertEqual(state, "SEARCHING")
+        self.assertEqual(vl, 0.0)
+        self.assertEqual(vr, 0.0)
+
     def test_full_lifecycle(self):
         self.assertTrue(self.follower.start())
         time.sleep(0.3)

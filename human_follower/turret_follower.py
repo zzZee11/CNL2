@@ -57,6 +57,10 @@ class TurretFollower:
         self._last_obs_timestamp: float = 0.0
         self._smoothed_d_err: float = 0.0
 
+        # Smart target recovery tracking (memory of last seen position)
+        self._last_seen_direction: Optional[str] = None
+        self._last_seen_time: float = 0.0
+
         # Vision Service initialization
         v_config = VisionConfig(
             camera_index=self.config.camera_index,
@@ -183,12 +187,38 @@ class TurretFollower:
         # Check if target is valid and fresh
         is_fresh = (now - obs.timestamp) <= self.config.target_timeout_s
         if not obs.target_valid or not is_fresh or obs.confidence < self.config.confidence_threshold:
-            self._set_wheel_velocities(0.0, 0.0)
             self._is_pivoting = False
+            self._smoothed_d_err = 0.0
             self._last_error = 0.0
-            self._last_error_time = now
+
+            # Smart target recovery: sweep gently in the direction the person was last seen
+            elapsed_lost = now - self._last_seen_time
+            if (
+                self.config.enable_search_recovery
+                and self._last_seen_direction is not None
+                and elapsed_lost <= self.config.search_duration_s
+            ):
+                search_speed = self.config.search_turn_speed
+                if self._last_seen_direction == "RIGHT":
+                    vl = +search_speed
+                    vr = -search_speed
+                    self.state = "SEARCH_RECOVERY_RIGHT"
+                else:
+                    vl = -search_speed
+                    vr = +search_speed
+                    self.state = "SEARCH_RECOVERY_LEFT"
+                self._set_wheel_velocities(vl, vr)
+                return vl, vr, self.state
+
+            # Search expired or no last direction: smooth halt
+            self._set_wheel_velocities(0.0, 0.0)
             self.state = "SEARCHING"
             return 0.0, 0.0, self.state
+
+        # Remember last seen direction for smart target recovery if target is lost
+        if abs(obs.horizontal_error) > 0.05:
+            self._last_seen_direction = "RIGHT" if obs.horizontal_error > 0 else "LEFT"
+        self._last_seen_time = now
 
         h_err = obs.horizontal_error  # -1.0 (left) to +1.0 (right)
 
@@ -275,6 +305,7 @@ class TurretFollower:
                 "bearing_deg": round(obs.bearing_deg, 1),
                 "confidence": round(obs.confidence, 2),
                 "target_valid": obs.target_valid,
+                "bbox": list(obs.bbox) if (obs.target_valid and obs.bbox is not None) else None,
                 "fps": v_telem.get("fps", 0.0),
                 "inf_ms": v_telem.get("inference_ms", 0.0),
             }

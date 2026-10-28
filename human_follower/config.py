@@ -37,9 +37,14 @@ class FollowerConfig:
     enable_turn_kick: bool = False
     turn_kick_speed: float = 0.35
     turn_kick_duration_s: float = 0.08
+
+    # ── Smart Target Recovery (Search in Last Moved Direction) ────────────────
+    enable_search_recovery: bool = True # Turn in last known direction instead of stopping blind
+    search_turn_speed: float = 0.14     # Gentle pivot speed while searching (m/s)
+    search_duration_s: float = 2.0      # How long to sweep in the last direction before giving up (seconds)
     
     # ── Safety & Timeouts ─────────────────────────────────────────────────────
-    target_timeout_s: float = 1.0      # If target is lost for > 1.0s, immediately stop motors
+    target_timeout_s: float = 1.0      # If target is lost for > 1.0s, begin search recovery or stop motors
     confidence_threshold: float = 0.40 # Minimum detection confidence
     
     # ── Robot Hardware Geometry ───────────────────────────────────────────────

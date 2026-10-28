@@ -49,6 +49,25 @@ def draw_turret_overlay(frame, telem):
     # Frame center crosshair
     cv2.drawMarker(frame, (cx_frame, cy_frame), (255, 255, 255), cv2.MARKER_CROSS, 20, 1)
 
+    # Draw target bounding box if available
+    bbox = telem.get("bbox")
+    if bbox is not None and len(bbox) == 4:
+        x1, y1, x2, y2 = [int(v) for v in bbox]
+        # Bounding box (Green)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        # Target center crosshair (Red)
+        tcx = (x1 + x2) // 2
+        tcy = (y1 + y2) // 2
+        cv2.drawMarker(frame, (tcx, tcy), (0, 0, 255), cv2.MARKER_CROSS, 16, 2)
+        # Vector line to center (Yellow)
+        cv2.line(frame, (cx_frame, cy_frame), (tcx, tcy), (0, 255, 255), 1)
+        # Tracking label
+        conf = telem.get("confidence", 0.0)
+        cv2.putText(
+            frame, f"TRACKING: {conf:.0%}", (x1, max(22, y1 - 8)),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2
+        )
+
     state = telem.get("state", "SEARCHING")
     vl = telem.get("v_left", 0.0)
     vr = telem.get("v_right", 0.0)
@@ -65,6 +84,10 @@ def draw_turret_overlay(frame, telem):
     elif state == "PIVOT_LEFT":
         color = (0, 165, 255)  # Orange
         banner = f"<<< PIVOTING LEFT (L: {vl:+.2f}, R: {vr:+.2f} m/s)"
+    elif "SEARCH_RECOVERY" in state:
+        color = (0, 165, 255)  # Orange
+        direction = "RIGHT >>>" if "RIGHT" in state else "<<< LEFT"
+        banner = f"TARGET LOST: SWEEPING {direction} TO REACQUIRE..."
     else:
         color = (0, 0, 255)  # Red
         banner = "SEARCHING FOR PERSON..."
