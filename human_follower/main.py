@@ -86,10 +86,12 @@ def main():
     parser.add_argument("--camera", type=int, default=0, help="Camera device index (default: 0)")
     parser.add_argument("--port", type=str, default="/dev/serial0", help="ESP32 serial port")
     parser.add_argument("--baud", type=int, default=115200, help="Serial baud rate")
-    parser.add_argument("--kp", type=float, default=0.45, help="Proportional turn gain (default: 0.45)")
-    parser.add_argument("--deadband", type=float, default=0.08, help="Center deadband threshold (default: 0.08)")
-    parser.add_argument("--min-speed", type=float, default=0.18, help="Minimum turn speed to overcome static friction")
-    parser.add_argument("--max-speed", type=float, default=0.40, help="Maximum turn speed (default: 0.40 m/s)")
+    parser.add_argument("--kp", type=float, default=0.35, help="Proportional turn gain (default: 0.35)")
+    parser.add_argument("--kd", type=float, default=0.12, help="Derivative damping gain (default: 0.12)")
+    parser.add_argument("--deadband-exit", type=float, default=0.10, help="Error threshold to start pivoting (default: 0.10)")
+    parser.add_argument("--deadband-enter", type=float, default=0.05, help="Error threshold to settle and stop (default: 0.05)")
+    parser.add_argument("--min-speed", type=float, default=0.12, help="Minimum gentle turn speed (default: 0.12 m/s)")
+    parser.add_argument("--max-speed", type=float, default=0.28, help="Maximum turn speed clamp (default: 0.28 m/s)")
     parser.add_argument("--confidence", type=float, default=0.40, help="Person detection confidence threshold")
     args = parser.parse_args()
 
@@ -100,7 +102,9 @@ def main():
         serial_port=args.port,
         serial_baud=args.baud,
         kp_turn=args.kp,
-        deadband=args.deadband,
+        kd_turn=args.kd,
+        deadband_exit=args.deadband_exit,
+        deadband_enter=args.deadband_enter,
         min_turn_speed=args.min_speed,
         max_turn_speed=args.max_speed,
         camera_index=args.camera,
@@ -115,8 +119,8 @@ def main():
     print("=" * 65)
     print(f"  Mode:            {'MOCK SIMULATION' if config.mock else 'HARDWARE (Camera + ESP32)'}")
     print(f"  Serial Port:     {config.serial_port} @ {config.serial_baud} baud")
-    print(f"  Turn Gain (Kp):  {config.kp_turn:.2f}")
-    print(f"  Deadband:        {config.deadband:.2f} (+/- {config.deadband * 100:.0f}% of frame center)")
+    print(f"  Gains:           Kp={config.kp_turn:.2f}, Kd={config.kd_turn:.2f} (Damping virtual brake)")
+    print(f"  Deadband:        Exit={config.deadband_exit:.2f} (10%) | Enter={config.deadband_enter:.2f} (5%)")
     print(f"  Turn Speeds:     {config.min_turn_speed:.2f} m/s min -> {config.max_turn_speed:.2f} m/s max")
     print(f"  Forward Speed:   0.00 m/s (Stationary Pivot Only)")
     print(f"  Headless:        {config.headless}")

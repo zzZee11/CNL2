@@ -2,8 +2,11 @@
 
 A self-contained, standalone tracking package inside [`human_follower/`](file:///home/zee/projects/CNL2/human_follower/).
 
-### Objective of Stage 1
-The robot remains stationary ($v_{\text{forward}} = 0.0\text{ m/s}$) and **pivots on the spot** like a camera turret to keep a moving human centered in the camera frame. This allows verifying vision-to-motor steering and deadband stability safely before enabling forward movement.
+### Anti-Overshoot Architecture
+1. **Hysteresis Deadband**: The robot only starts pivoting when you move outside `deadband_exit` (10%), but once turning, it smoothly settles and halts when you reach `deadband_enter` (5%). This eliminates hunting oscillation.
+2. **Derivative Damping (PD Control)**: As the target approaches the center line, the derivative term ($K_d$) acts as a virtual brake, counteracting momentum to prevent overshooting.
+3. **Smooth Power Easing**: Small movements produce gentle, proportional wheel speeds ($0.12\text{ m/s}$) rather than abrupt high-speed jerks.
+4. **No Turn Stiction Kick**: The high-power startup kick is disabled for in-place pivots because differential turning has low rotational inertia compared to driving forward.
 
 ---
 

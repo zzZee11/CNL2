@@ -101,6 +101,32 @@ class TestTurretFollower(unittest.TestCase):
         self.assertEqual(vl, 0.0)
         self.assertEqual(vr, 0.0)
 
+    def test_hysteresis_and_damping(self):
+        t0 = time.monotonic()
+        # 1. Start inside deadband (|h_err| = 0.04 <= 0.10 deadband_exit) -> Motors idle
+        obs1 = TargetObservation(target_valid=True, confidence=0.9, horizontal_error=+0.04, timestamp=t0)
+        vl, vr, state = self.follower.step(obs1)
+        self.assertEqual(state, "LOCKED_CENTER")
+        self.assertEqual(vl, 0.0)
+
+        # 2. Step outside deadband_exit (h_err = +0.15 > 0.10) -> Starts pivoting right
+        obs2 = TargetObservation(target_valid=True, confidence=0.9, horizontal_error=+0.15, timestamp=t0 + 0.05)
+        vl, vr, state = self.follower.step(obs2)
+        self.assertEqual(state, "PIVOT_RIGHT")
+        self.assertGreater(vl, 0.0)
+
+        # 3. Person moves into hysteresis band (h_err = +0.07, between enter 0.05 and exit 0.10)
+        # Because robot is ALREADY pivoting, it should smoothly continue pivoting until reaching <= 0.05
+        obs3 = TargetObservation(target_valid=True, confidence=0.9, horizontal_error=+0.07, timestamp=t0 + 0.10)
+        vl, vr, state = self.follower.step(obs3)
+        self.assertEqual(state, "PIVOT_RIGHT")
+
+        # 4. Enters deadband_enter (h_err = +0.04 <= 0.05) -> Settles and stops
+        obs4 = TargetObservation(target_valid=True, confidence=0.9, horizontal_error=+0.04, timestamp=t0 + 0.15)
+        vl, vr, state = self.follower.step(obs4)
+        self.assertEqual(state, "LOCKED_CENTER")
+        self.assertEqual(vl, 0.0)
+
     def test_full_service_lifecycle(self):
         self.assertTrue(self.follower.start())
         time.sleep(0.3)

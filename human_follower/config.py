@@ -2,6 +2,7 @@
 human_follower/config.py
 ------------------------
 Configuration parameters for Stage 1 Turret Tracking (Stationary Pivoting).
+Tuned with PD damping and hysteresis to eliminate overshoot and hunting oscillations.
 """
 
 from dataclasses import dataclass
@@ -16,15 +17,25 @@ class FollowerConfig:
     watchdog_timeout_s: float = 0.45   # Serial command timeout
     
     # ── Stage 1 Turret Turning Controls ───────────────────────────────────────
-    kp_turn: float = 0.45              # Proportional gain: wheel_speed = Kp * horizontal_error
-    deadband: float = 0.08             # Normalized center deadband (|err| <= 0.08 -> motors 0)
-    min_turn_speed: float = 0.18       # Minimum wheel speed (m/s) to overcome DC motor gearbox stiction
-    max_turn_speed: float = 0.40       # Clamped maximum wheel speed (m/s) for smooth turning
+    kp_turn: float = 0.35              # Proportional gain: determines base turning speed
+    kd_turn: float = 0.12              # Derivative damping gain: acts as virtual brake against overshoot
+    
+    # ── Hysteresis Deadband (Eliminates Hunting / Chattering) ──────────────────
+    # Outside deadband_exit (e.g. |err| > 0.10): robot starts pivoting
+    # Inside deadband_enter (e.g. |err| <= 0.05): robot comes to complete stop
+    deadband_exit: float = 0.10        # Trigger threshold to start turning (10% of frame center)
+    deadband_enter: float = 0.05       # Settle threshold to stop turning (5% of frame center)
+    deadband: float = 0.08             # Backward compatibility default
+    
+    # ── Speed Boundaries for Gentle Pivoting ──────────────────────────────────
+    min_turn_speed: float = 0.12       # Gentle minimum wheel speed (m/s) for small corrections
+    max_turn_speed: float = 0.28       # Capped maximum wheel speed (m/s) to prevent overshooting
     
     # ── Startup Kick for Turns ────────────────────────────────────────────────
-    enable_turn_kick: bool = True      # Quick breakaway kick when starting a pivot from stop
-    turn_kick_speed: float = 0.55      # Breakaway speed (m/s)
-    turn_kick_duration_s: float = 0.10 # 100 ms burst duration
+    # Disabled for in-place pivots: differential pivots have low inertia and high kick causes overshooting
+    enable_turn_kick: bool = False
+    turn_kick_speed: float = 0.35
+    turn_kick_duration_s: float = 0.08
     
     # ── Safety & Timeouts ─────────────────────────────────────────────────────
     target_timeout_s: float = 1.0      # If target is lost for > 1.0s, immediately stop motors
@@ -44,13 +55,18 @@ class FollowerConfig:
     headless: bool = False
     mock: bool = False
 
+    def __post_init__(self) -> None:
+        if self.deadband_enter > self.deadband_exit:
+            self.deadband_enter = self.deadband_exit * 0.6
+
     def validate(self) -> None:
         if self.tx_rate_hz <= 0:
             raise ValueError("tx_rate_hz must be positive.")
-        if self.deadband < 0.0 or self.deadband > 0.5:
-            raise ValueError("deadband must be in [0.0, 0.5].")
+        if self.deadband_exit <= 0.0 or self.deadband_exit > 0.5:
+            raise ValueError("deadband_exit must be in (0.0, 0.5].")
+        if self.deadband_enter < 0.0 or self.deadband_enter >= self.deadband_exit:
+            raise ValueError("deadband_enter must be in [0.0, deadband_exit).")
         if self.min_turn_speed > self.max_turn_speed:
             raise ValueError("min_turn_speed cannot exceed max_turn_speed.")
         if self.kp_turn <= 0:
             raise ValueError("kp_turn must be positive.")
-

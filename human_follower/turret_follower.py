@@ -4,6 +4,12 @@ human_follower/turret_follower.py
 Stage 1 Stationary Turret Follower:
 Rotates the robot on the spot (pivoting) to keep a detected person centered in the camera.
 Forward velocity is strictly 0.0 m/s.
+
+Anti-Overshoot Architecture:
+1. Hysteresis Deadband: Starts pivoting at deadband_exit (10%), settles and stops at deadband_enter (5%).
+2. Derivative Damping (PD): As target approaches center line, d_error opposes motion to brake smoothly.
+3. Smooth Power Easing: Small displacements produce gentle, proportional speeds without step jumps.
+4. No Turning Stiction Kick: Eliminates high-power initial pulses that cause overshooting.
 """
 
 import math
@@ -24,7 +30,7 @@ from vision.target_data import TargetObservation
 
 class TurretFollower:
     """
-    Stage 1 Controller: Pivots on the spot to follow a human.
+    Stage 1 Controller: Pivots on the spot to follow a human smoothly without overshooting.
     """
 
     def __init__(self, config: Optional[FollowerConfig] = None) -> None:
@@ -44,6 +50,11 @@ class TurretFollower:
         self._running: bool = False
         self._tx_thread: Optional[threading.Thread] = None
         self._loop_thread: Optional[threading.Thread] = None
+
+        # Tracking controller state (PD + Hysteresis)
+        self._is_pivoting: bool = False
+        self._last_error: float = 0.0
+        self._last_error_time: float = 0.0
 
         # Vision Service initialization
         v_config = VisionConfig(
@@ -112,7 +123,7 @@ class TurretFollower:
                 vr = self._target_v_right
                 is_kicking = (t0 < self._current_kick_until)
 
-            # Apply startup kick if active to overcome static friction
+            # Apply startup kick only if explicitly enabled
             if is_kicking:
                 kick_speed = self.config.turn_kick_speed
                 cmd_l = (kick_speed if vl > 0 else -kick_speed) if abs(vl) > 0.01 else 0.0
@@ -150,7 +161,7 @@ class TurretFollower:
 
     def step(self, obs: Optional[TargetObservation] = None) -> Tuple[float, float, str]:
         """
-        Execute one control step based on a target observation.
+        Execute one control step based on a target observation with PD damping and hysteresis.
         Returns: (v_left, v_right, state)
         """
         if obs is None:
@@ -163,31 +174,67 @@ class TurretFollower:
         is_fresh = (now - obs.timestamp) <= self.config.target_timeout_s
         if not obs.target_valid or not is_fresh or obs.confidence < self.config.confidence_threshold:
             self._set_wheel_velocities(0.0, 0.0)
+            self._is_pivoting = False
+            self._last_error = 0.0
+            self._last_error_time = now
             self.state = "SEARCHING"
             return 0.0, 0.0, self.state
 
         h_err = obs.horizontal_error  # -1.0 (left) to +1.0 (right)
 
-        # Check deadband: person is centered
-        if abs(h_err) <= self.config.deadband:
+        # ── 1. Hysteresis Deadband Evaluation ─────────────────────────────────
+        # If already pivoting: must get inside deadband_enter (5%) to settle and stop
+        # If currently idle: must cross outside deadband_exit (10%) to trigger pivoting
+        active_deadband = self.config.deadband_enter if self._is_pivoting else self.config.deadband_exit
+
+        if abs(h_err) <= active_deadband:
             self._set_wheel_velocities(0.0, 0.0)
+            self._is_pivoting = False
+            self._last_error = h_err
+            self._last_error_time = now
             self.state = "LOCKED_CENTER"
             return 0.0, 0.0, self.state
 
-        # Calculate proportional turning velocity
-        raw_speed = self.config.kp_turn * abs(h_err)
-        turn_speed = max(self.config.min_turn_speed, min(self.config.max_turn_speed, raw_speed))
+        self._is_pivoting = True
 
-        # Pivot in place:
-        # If person is to the RIGHT (h_err > 0): Left wheel forward, Right wheel backward
-        # If person is to the LEFT (h_err < 0): Left wheel backward, Right wheel forward
+        # ── 2. Derivative Error Calculation (Virtual Brake) ───────────────────
+        dt = max(0.01, now - self._last_error_time) if self._last_error_time > 0 else 0.05
+        d_err = (h_err - self._last_error) / dt
+        self._last_error = h_err
+        self._last_error_time = now
+
+        # ── 3. Smooth Non-Linear Power Easing ──────────────────────────────────
+        # Computes proportional speed scaled smoothly above deadband without abrupt step-jumps
+        err_mag = abs(h_err)
+        span = max(0.01, 1.0 - self.config.deadband_enter)
+        norm_mag = min(1.0, max(0.0, (err_mag - self.config.deadband_enter) / span))
+
+        # Easing curve: for small errors (e.g. 0.10), speed scales gently near min_turn_speed
+        base_speed = self.config.min_turn_speed + (
+            self.config.max_turn_speed - self.config.min_turn_speed
+        ) * (norm_mag ** 1.3)
+
+        # ── 4. Derivative Damping Counteraction ────────────────────────────────
+        # If the target is rapidly approaching the center line, damp speed to prevent overshoot
+        is_closing_in = (h_err > 0 and d_err < -0.2) or (h_err < 0 and d_err > 0.2)
+        if is_closing_in:
+            damping_factor = max(0.45, 1.0 - 0.20 * abs(d_err))
+            speed = base_speed * damping_factor
+        else:
+            speed = base_speed
+
+        speed = max(self.config.min_turn_speed, min(self.config.max_turn_speed, speed))
+
+        # ── 5. Assign Wheel Directions ────────────────────────────────────────
+        # Target to RIGHT (h_err > 0): Left wheel forward (+), Right wheel backward (-)
+        # Target to LEFT (h_err < 0): Left wheel backward (-), Right wheel forward (+)
         if h_err > 0:
-            vl = +turn_speed
-            vr = -turn_speed
+            vl = +speed
+            vr = -speed
             self.state = "PIVOT_RIGHT"
         else:
-            vl = -turn_speed
-            vr = +turn_speed
+            vl = -speed
+            vr = +speed
             self.state = "PIVOT_LEFT"
 
         self._set_wheel_velocities(vl, vr)
@@ -244,4 +291,3 @@ class TurretFollower:
 
         self.vision.stop()
         self.state = "STOPPED"
-
