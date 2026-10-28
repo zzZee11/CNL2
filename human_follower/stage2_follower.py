@@ -5,19 +5,11 @@ Stage 2 Human Follower: Combined Distance Tracking & Heading Steering.
 
 Objective:
 In open space, follows a moving human at a calibrated target distance (default ~1.2m).
-1. Hard Hardware Safety Shield:
-   Reads all 3 ToF laser distance sensors (Left, Middle, Right). If any obstacle or human
-   is closer than the emergency threshold (< 0.45m), immediately commands an instant hardware halt.
-2. Robust Distance Fusion:
-   Prioritizes high-precision direct ToF laser measurements. If the target is beyond ToF range
-   (> 1.85m), uses a calibrated vision bounding-box height proxy with physical sanity bounds
-   to prevent false far-distance estimates.
-3. Smooth Forward Curvature Steering (Anti-Fish-tailing):
-   While driving forward, wheels are already in motion (zero stiction). Applies smooth,
-   continuous curvature steering with wider deadbands to reject natural human walking sway,
-   completely eliminating left-right hunting oscillations.
-4. Precision Turret Pivoting:
-   When stopped (holding the sweet spot), uses Stage 1 PD anti-overshoot easing with virtual brake damping.
+1. Distance Control: Measures distance via Center VL53L0X ToF laser (close-range, high precision)
+   and vision bounding-box height proxy (long-range). Drives forward when person walks away,
+   smoothly decelerates and halts when person is within the sweet spot (1.0m - 1.4m).
+2. Heading Control: Uses Stage 1 PD anti-overshoot steering to keep person centered.
+3. Safety Supervisor: Emergency stop if distance drops below safety buffer (< 0.45m).
 """
 
 import math
@@ -48,44 +40,34 @@ class Stage2Config:
     # ── Stage 2 Distance Regulation Controls ──────────────────────────────────
     target_distance_m: float = 1.20    # Desired distance to maintain from the human (meters)
     distance_deadband_m: float = 0.20  # +/- 20 cm sweet spot: between (target - 0.2) and (target + 0.2), v_lin = 0
-    kp_dist: float = 0.50              # Proportional gain for forward velocity
+    kp_dist: float = 0.55              # Proportional gain for forward velocity: v = Kp * distance_error
     min_forward_speed: float = 0.15    # Minimum forward speed (m/s) to overcome DC motor gearbox stiction
-    max_forward_speed: float = 0.40    # Maximum cruising forward speed (m/s)
+    max_forward_speed: float = 0.45    # Maximum cruising forward speed (m/s)
     emergency_stop_dist_m: float = 0.45 # Distance threshold below which robot halts immediately
     
-    # ── Stationary Turret Heading Controls (PD Anti-Overshoot) ────────────────
-    # Active ONLY when v_linear == 0 (pivoting on the spot)
-    kp_turn: float = 0.30              # Proportional turn gain
-    kd_turn: float = 0.10              # Derivative damping gain (virtual brake on center approach)
+    # ── Stage 1 Heading Controls (PD Anti-Overshoot) ───────────────────────────
+    kp_turn: float = 0.35              # Proportional turn gain
+    kd_turn: float = 0.12              # Derivative damping gain (virtual brake on center approach)
     deadband_turn_exit: float = 0.10   # Trigger threshold to start steering (10% of frame center)
     deadband_turn_enter: float = 0.05  # Settle threshold to stop steering (5% of frame center)
-    min_turn_speed: float = 0.10       # Minimum gentle turn speed (m/s)
-    max_turn_speed: float = 0.22       # Maximum turn speed clamp (m/s)
-    
-    # ── Forward Motion Curvature Steering (Anti-Fish-tailing) ─────────────────
-    # Active when v_linear > 0 (curving while driving forward)
-    # Uses continuous proportional curvature without discrete stiction jumps
-    deadband_forward_exit: float = 0.14   # Ignores human walking sway (< 14% of frame center)
-    deadband_forward_enter: float = 0.07  # Settles back to straight drive
-    kp_turn_forward: float = 0.25         # Gentle proportional curvature gain
-    kd_turn_forward: float = 0.08         # Derivative rate damping during forward motion
-    max_turn_forward_speed: float = 0.14  # Maximum differential turn offset while cruising
+    min_turn_speed: float = 0.12       # Minimum gentle turn speed (m/s)
+    max_turn_speed: float = 0.25       # Maximum turn speed clamp (m/s)
     
     # ── Forward Startup Kick ──────────────────────────────────────────────────
     # Kick is applied ONLY when starting forward drive from a complete stop,
     # overcoming static friction of the entire vehicle. (Pivots do NOT trigger kick).
     enable_forward_kick: bool = True
-    forward_kick_speed: float = 0.45
+    forward_kick_speed: float = 0.50
     forward_kick_duration_s: float = 0.12
 
     # ── Smooth Stop & Acceleration Ramping ────────────────────────────────────
     enable_smooth_stop: bool = True     # Soft deceleration ramp when stopping or changing speeds
-    max_accel_mps2: float = 0.70        # Slew-rate acceleration limit (m/s^2)
-    max_decel_mps2: float = 1.00        # Slew-rate deceleration limit (m/s^2) for responsive sweet-spot entry
+    max_accel_mps2: float = 0.80        # Slew-rate acceleration limit (m/s^2)
+    max_decel_mps2: float = 0.60        # Slew-rate deceleration limit (m/s^2) for silky-smooth stops
 
     # ── Smart Target Recovery (Search in Last Moved Direction) ────────────────
     enable_search_recovery: bool = True # Turn in last known direction instead of stopping blind
-    search_turn_speed: float = 0.14     # Gentle pivot speed while searching (m/s)
+    search_turn_speed: float = 0.15     # Gentle pivot speed while searching (m/s)
     search_duration_s: float = 2.0      # How long to sweep in the last direction before giving up (seconds)
     
     # ── Safety & Timeouts ─────────────────────────────────────────────────────
@@ -126,7 +108,6 @@ class Stage2DistanceFollower:
         self._target_v_left: float = 0.0
         self._target_v_right: float = 0.0
         self._forward_kick_until: float = 0.0
-        self._emergency_stop: bool = False
 
         # State tracking
         self.state: str = "INITIALIZING"
@@ -134,11 +115,10 @@ class Stage2DistanceFollower:
         self._tx_thread: Optional[threading.Thread] = None
         self._loop_thread: Optional[threading.Thread] = None
 
-        # Heading PD & Hysteresis state (synchronized to camera frames)
+        # Heading PD & Hysteresis state
         self._is_steering: bool = False
-        self._last_error: float = 0.0
-        self._last_obs_timestamp: float = 0.0
-        self._smoothed_d_err: float = 0.0
+        self._last_h_err: float = 0.0
+        self._last_h_err_time: float = 0.0
 
         # Smart target recovery tracking (memory of last seen position)
         self._last_seen_direction: Optional[str] = None
@@ -218,43 +198,39 @@ class Stage2DistanceFollower:
             t0 = time.monotonic()
 
             with self._serial_lock:
-                emergency = self._emergency_stop
                 vl = self._target_v_left
                 vr = self._target_v_right
                 is_kicking = (t0 < self._forward_kick_until)
 
-            if emergency:
-                # Immediate hard hardware stop: bypass slew-rate glide
-                current_cmd_l = 0.0
-                current_cmd_r = 0.0
+            # Apply forward breakaway kick if active
+            if is_kicking:
+                kick = self.config.forward_kick_speed
+                target_l = kick if vl > 0.05 else vl
+                target_r = kick if vr > 0.05 else vr
             else:
-                # Apply forward breakaway kick if active
-                if is_kicking:
-                    kick = self.config.forward_kick_speed
-                    target_l = kick if vl > 0.05 else vl
-                    target_r = kick if vr > 0.05 else vr
-                else:
-                    target_l = vl
-                    target_r = vr
+                target_l = vl
+                target_r = vr
 
-                # Smooth Acceleration and Deceleration Slew-Rate Limiting:
-                if self.config.enable_smooth_stop:
-                    # Left wheel
-                    diff_l = target_l - current_cmd_l
-                    if diff_l > 0:
-                        current_cmd_l += min(diff_l, max_delta_accel)
-                    else:
-                        current_cmd_l -= min(-diff_l, max_delta_decel)
-
-                    # Right wheel
-                    diff_r = target_r - current_cmd_r
-                    if diff_r > 0:
-                        current_cmd_r += min(diff_r, max_delta_accel)
-                    else:
-                        current_cmd_r -= min(-diff_r, max_delta_decel)
+            # Smooth Acceleration and Deceleration Slew-Rate Limiting:
+            # When speeding up (target > current), use max_delta_accel
+            # When slowing down / stopping (target < current), use max_delta_decel for a silky-smooth glide
+            if self.config.enable_smooth_stop:
+                # Left wheel
+                diff_l = target_l - current_cmd_l
+                if diff_l > 0:
+                    current_cmd_l += min(diff_l, max_delta_accel)
                 else:
-                    current_cmd_l = target_l
-                    current_cmd_r = target_r
+                    current_cmd_l -= min(-diff_l, max_delta_decel)
+
+                # Right wheel
+                diff_r = target_r - current_cmd_r
+                if diff_r > 0:
+                    current_cmd_r += min(diff_r, max_delta_accel)
+                else:
+                    current_cmd_r -= min(-diff_r, max_delta_decel)
+            else:
+                current_cmd_l = target_l
+                current_cmd_r = target_r
 
             if self._ser is not None:
                 try:
@@ -269,24 +245,10 @@ class Stage2DistanceFollower:
             if sleep_time > 0:
                 time.sleep(sleep_time)
 
-    def _set_wheel_velocities(
-        self,
-        vl: float,
-        vr: float,
-        is_forward_accel: bool = False,
-        immediate_stop: bool = False,
-    ) -> None:
-        """Update commanded wheel velocities with forward kick trigger and emergency override."""
+    def _set_wheel_velocities(self, vl: float, vr: float, is_forward_accel: bool = False) -> None:
+        """Update commanded wheel velocities with forward kick trigger."""
         now = time.monotonic()
         with self._serial_lock:
-            if immediate_stop:
-                self._emergency_stop = True
-                self._target_v_left = 0.0
-                self._target_v_right = 0.0
-                self._forward_kick_until = 0.0
-                return
-
-            self._emergency_stop = False
             was_stopped = (abs(self._target_v_left) < 0.02 and abs(self._target_v_right) < 0.02)
             moving_forward = (vl > 0.05 and vr > 0.05)
 
@@ -296,78 +258,31 @@ class Stage2DistanceFollower:
             self._target_v_left = vl
             self._target_v_right = vr
 
-    def _estimate_human_distance(
-        self,
-        obs: TargetObservation,
-        left_dist: float = 9.99,
-        mid_dist: float = 9.99,
-        right_dist: float = 9.99,
-    ) -> Tuple[float, str]:
+    def _estimate_human_distance(self, obs: TargetObservation, mid_dist: float) -> Tuple[float, str]:
         """
-        Multi-Sensor Distance Fusion:
-        1. If Center ToF sensor has a valid reading (< 1.85m), prioritize it (millimeter laser accuracy).
-        2. If Center missed, check Left/Right ToF sensors matching person bearing.
-        3. If all ToF sensors are out of range (> 1.85m) or missed, evaluate Vision Bounding Box:
-           - If bounding box fills >= 65% of screen height, target is close (< 1.0m)!
-           - Otherwise, compute calibrated distance proxy from normalized box height.
+        Sensor Fusion:
+        1. If Center ToF sensor has a valid reading (< 1.85m) and person is roughly centered -> Use ToF laser.
+        2. Else -> Use calibrated vision height proxy.
         """
-        # Priority 1: Direct Center ToF laser measurement
-        if 0.05 < mid_dist < 1.85:
+        is_centered = abs(obs.horizontal_error) < 0.25
+        if is_centered and 0.05 < mid_dist < 1.85:
             return mid_dist, "TOF_LASER"
 
-        # Priority 2: Directional ToF laser measurement based on tracked lateral error
-        if obs.target_valid:
-            if obs.horizontal_error < -0.10 and 0.05 < left_dist < 1.70:
-                return left_dist, "TOF_LEFT"
-            if obs.horizontal_error > +0.10 and 0.05 < right_dist < 1.70:
-                return right_dist, "TOF_RIGHT"
+        if obs.distance is not None and 0.3 < obs.distance < 8.0:
+            return obs.distance, "VISION_PROXY"
 
-            # Check if either side ToF senses an obstacle in close proximity
-            valid_sides = [d for d in (left_dist, right_dist) if 0.05 < d < 1.20]
-            if valid_sides:
-                return min(valid_sides), "TOF_NEAR"
-
-        # Priority 3: Vision Bounding Box Height Proxy with Physical Sanity Clamps
-        if obs.target_valid and obs.bbox is not None and len(obs.bbox) == 4:
-            x1, y1, x2, y2 = obs.bbox
-            box_h = max(1.0, float(y2 - y1))
-            frame_h = float(self.config.camera_height)
-            h_norm = box_h / frame_h
-
-            # If person fills >= 65% of vertical frame or is clipped at top and bottom:
-            # Human is very close to the camera (sweet spot or closer), NEVER charge forward!
-            if h_norm >= 0.65 or (y1 <= 12 and y2 >= frame_h - 12):
-                return 0.95, "VISION_CLOSE"
-
-            if h_norm >= 0.45:
-                # Inside or right at edge of sweet spot (1.0m - 1.35m)
-                d_est = max(0.95, min(1.35, 0.65 / h_norm))
-                return round(d_est, 2), "VISION_SWEET"
-
-            # Farther away (> 1.4m)
-            d_est = max(1.40, min(3.50, 0.65 / h_norm))
-            return round(d_est, 2), "VISION_FAR"
-
-        # Priority 4: Fallback ToF if available
-        if 0.05 < mid_dist < 2.0:
-            return mid_dist, "TOF_LASER"
+        # If person is centered but ToF reads > 1.85m (out of range)
+        if mid_dist >= 1.85:
+            return 2.2, "TOF_OUT_OF_RANGE"
 
         return 1.20, "DEFAULT"
 
-    def step(
-        self,
-        obs: Optional[TargetObservation] = None,
-        mock_mid_tof: Optional[float] = None,
-        mock_tofs: Optional[Tuple[float, float, float]] = None,
-    ) -> Tuple[float, float, str]:
+    def step(self, obs: Optional[TargetObservation] = None, mock_mid_tof: Optional[float] = None) -> Tuple[float, float, str]:
         """
         Execute one control cycle:
-        1. Hard hardware safety check across all 3 ToF lasers (< 0.45m -> immediate stop).
-        2. Distance regulation: linear velocity (v_linear) with smooth ramp into sweet spot.
-        3. Heading regulation:
-           - If moving forward: continuous proportional curvature steering (anti-fish-tailing).
-           - If stationary: precision turret pivot with anti-overshoot PD damping.
-        4. Kinematics fusion -> (v_left, v_right).
+        1. Evaluate distance error -> linear velocity (v_lin)
+        2. Evaluate heading error -> angular turn velocity (v_turn)
+        3. Differential kinematics fusion -> (v_left, v_right)
         """
         if obs is None:
             obs = self.vision.get_latest_observation()
@@ -379,7 +294,8 @@ class Stage2DistanceFollower:
         is_fresh = (now - obs.timestamp) <= self.config.target_timeout_s
         if not obs.target_valid or not is_fresh or obs.confidence < self.config.confidence_threshold:
             self._is_steering = False
-            self._last_error = 0.0
+            self._last_h_err = 0.0
+            self._last_h_err_time = now
 
             # Smart target recovery: sweep gently in the direction the person was last seen
             elapsed_lost = now - self._last_seen_time
@@ -411,130 +327,81 @@ class Stage2DistanceFollower:
         self._last_seen_time = now
 
         # Get ToF distance readings [left, middle, right]
-        if mock_tofs is not None:
-            left_d, mid_d, right_d = mock_tofs
-        elif mock_mid_tof is not None:
-            left_d, mid_d, right_d = 9.99, mock_mid_tof, 9.99
+        if mock_mid_tof is not None:
+            mid_dist = mock_mid_tof
         else:
-            left_d, mid_d, right_d = self.sensors.get_distances()
-
-        # ── 1. HARD HARDWARE SAFETY SHIELD ────────────────────────────────────
-        # If ANY ToF sensor sees an obstacle or human closer than emergency stop threshold:
-        # Slam on the physical brakes immediately!
-        valid_tofs = [d for d in (left_d, mid_d, right_d) if 0.03 < d < 2.0]
-        min_tof = min(valid_tofs) if valid_tofs else None
-
-        if min_tof is not None and min_tof < self.config.emergency_stop_dist_m:
-            self._set_wheel_velocities(0.0, 0.0, immediate_stop=True)
-            self.state = "SAFETY_STOP"
-            return 0.0, 0.0, self.state
+            _, mid_dist, _ = self.sensors.get_distances()
 
         # Sensor fusion for human distance
-        dist_m, dist_source = self._estimate_human_distance(
-            obs, left_dist=left_d, mid_dist=mid_d, right_dist=right_d
-        )
+        dist_m, dist_source = self._estimate_human_distance(obs, mid_dist)
 
+        # ── 1. Safety Check: Emergency Stop ───────────────────────────────────
         if dist_m < self.config.emergency_stop_dist_m:
-            self._set_wheel_velocities(0.0, 0.0, immediate_stop=True)
+            self._set_wheel_velocities(0.0, 0.0)
             self.state = "SAFETY_STOP"
             return 0.0, 0.0, self.state
 
         # ── 2. Distance Regulation (Linear Velocity) ──────────────────────────
-        sweet_spot_min = self.config.target_distance_m - self.config.distance_deadband_m  # e.g. 1.00m
-        sweet_spot_max = self.config.target_distance_m + self.config.distance_deadband_m  # e.g. 1.40m
+        sweet_spot_min = self.config.target_distance_m - self.config.distance_deadband_m  # e.g. 1.0m
+        sweet_spot_max = self.config.target_distance_m + self.config.distance_deadband_m  # e.g. 1.4m
 
         if dist_m > sweet_spot_max:
-            # Person is walking away: drive forward with smooth progressive ramp
-            excess_dist = dist_m - sweet_spot_max
-            v_linear = self.config.min_forward_speed + (
-                self.config.max_forward_speed - self.config.min_forward_speed
-            ) * min(1.0, excess_dist / 0.80)
+            # Person is walking away: drive forward
+            dist_error = dist_m - self.config.target_distance_m
+            raw_v_lin = self.config.kp_dist * dist_error
+            v_linear = max(self.config.min_forward_speed, min(self.config.max_forward_speed, raw_v_lin))
             is_forward_drive = True
         else:
             # Inside sweet spot (1.0m - 1.4m) or close: hold forward position
             v_linear = 0.0
             is_forward_drive = False
 
-        # ── 3. Frame-Synchronized Heading Rate Calculation ────────────────────
-        h_err = obs.horizontal_error  # -1.0 (left) to +1.0 (right)
+        # ── 3. Heading Regulation (Angular Velocity using PD Anti-Overshoot) ──
+        h_err = obs.horizontal_error
+        active_turn_deadband = self.config.deadband_turn_enter if self._is_steering else self.config.deadband_turn_exit
 
-        if obs.timestamp > self._last_obs_timestamp:
-            dt = max(0.02, obs.timestamp - self._last_obs_timestamp)
-            raw_d_err = (h_err - self._last_error) / dt
-            # Low-pass filter to reject single-frame bounding-box jitter
-            self._smoothed_d_err = 0.40 * raw_d_err + 0.60 * self._smoothed_d_err
-            self._last_error = h_err
-            self._last_obs_timestamp = obs.timestamp
-
-        d_err = self._smoothed_d_err
-
-        # ── 4. Heading Regulation (Curvature Steering vs Stationary Pivot) ────
-        if is_forward_drive:
-            # ── BRANCH A: Forward Curvature Steering (Anti-Fish-tailing) ──────
-            # While driving forward, wheels are already in motion (zero stiction).
-            # We use a wider deadband to ignore natural human walking sway (torso swaying +/- 10cm).
-            active_deadband = (
-                self.config.deadband_forward_enter
-                if self._is_steering
-                else self.config.deadband_forward_exit
-            )
-
-            if abs(h_err) <= active_deadband:
-                v_turn = 0.0
-                self._is_steering = False
-            else:
-                self._is_steering = True
-                excess = abs(h_err) - self.config.deadband_forward_enter
-                raw_turn = self.config.kp_turn_forward * excess
-
-                # Rate damping: if target is closing in on center line, ease off turn
-                is_closing_in = (h_err > 0 and d_err < -0.15) or (h_err < 0 and d_err > 0.15)
-                if is_closing_in:
-                    raw_turn *= max(0.40, 1.0 - 0.25 * abs(d_err))
-
-                turn_speed = max(0.03, min(self.config.max_turn_forward_speed, raw_turn))
-                v_turn = turn_speed if h_err > 0 else -turn_speed
-
-            # If heading error is significant (> 0.20), scale down forward speed slightly
-            if abs(h_err) > 0.20:
-                scale_factor = max(0.35, math.cos(math.radians(obs.bearing_deg)))
-                v_linear *= scale_factor
-
+        if abs(h_err) <= active_turn_deadband:
+            v_turn = 0.0
+            self._is_steering = False
+            self._last_h_err = h_err
+            self._last_h_err_time = now
         else:
-            # ── BRANCH B: Stationary Turret Pivot (Anti-Overshoot) ────────────
-            # Robot is stopped (holding sweet spot or reorienting).
-            # Uses Stage 1 PD anti-overshoot easing with min_turn_speed breakaway.
-            active_deadband = (
-                self.config.deadband_turn_enter
-                if self._is_steering
-                else self.config.deadband_turn_exit
-            )
+            self._is_steering = True
+            dt = max(0.01, now - self._last_h_err_time) if self._last_h_err_time > 0 else 0.05
+            d_err = (h_err - self._last_h_err) / dt
+            self._last_h_err = h_err
+            self._last_h_err_time = now
 
-            if abs(h_err) <= active_deadband:
-                v_turn = 0.0
-                self._is_steering = False
+            # Smooth power easing
+            err_mag = abs(h_err)
+            span = max(0.01, 1.0 - self.config.deadband_turn_enter)
+            norm_mag = min(1.0, max(0.0, (err_mag - self.config.deadband_turn_enter) / span))
+            base_turn_speed = self.config.min_turn_speed + (
+                self.config.max_turn_speed - self.config.min_turn_speed
+            ) * (norm_mag ** 1.3)
+
+            # Derivative damping counteraction
+            is_closing_in = (h_err > 0 and d_err < -0.2) or (h_err < 0 and d_err > 0.2)
+            if is_closing_in:
+                damping_factor = max(0.45, 1.0 - 0.20 * abs(d_err))
+                turn_speed = base_turn_speed * damping_factor
             else:
-                self._is_steering = True
-                err_mag = abs(h_err)
-                span = max(0.01, 1.0 - self.config.deadband_turn_enter)
-                norm_mag = min(1.0, max(0.0, (err_mag - self.config.deadband_turn_enter) / span))
-                base_turn_speed = self.config.min_turn_speed + (
-                    self.config.max_turn_speed - self.config.min_turn_speed
-                ) * (norm_mag ** 1.3)
+                turn_speed = base_turn_speed
 
-                is_closing_in = (h_err > 0 and d_err < -0.20) or (h_err < 0 and d_err > 0.20)
-                if is_closing_in:
-                    damping_factor = max(0.45, 1.0 - 0.20 * abs(d_err))
-                    turn_speed = base_turn_speed * damping_factor
-                else:
-                    turn_speed = base_turn_speed
+            turn_speed = max(self.config.min_turn_speed, min(self.config.max_turn_speed, turn_speed))
+            # Direction: positive h_err (right) requires left wheel faster / right wheel slower
+            v_turn = turn_speed if h_err > 0 else -turn_speed
 
-                turn_speed = max(self.config.min_turn_speed, min(self.config.max_turn_speed, turn_speed))
-                v_turn = turn_speed if h_err > 0 else -turn_speed
+        # ── 4. Turn Factor Reduction on Linear Speed ──────────────────────────
+        # If robot needs to turn sharply (|h_err| > 0.25), scale down forward speed so it doesn't drift away
+        if abs(h_err) > 0.20:
+            scale_factor = max(0.30, math.cos(math.radians(obs.bearing_deg)))
+            v_linear *= scale_factor
 
         # ── 5. Kinematics Fusion ──────────────────────────────────────────────
         # Left wheel = v_linear + v_turn
         # Right wheel = v_linear - v_turn
+        # (If v_linear=0, left=+v_turn, right=-v_turn -> pivots in place like Stage 1)
         vl = v_linear + v_turn
         vr = v_linear - v_turn
 
@@ -545,12 +412,12 @@ class Stage2DistanceFollower:
 
         # Determine human-readable state
         if v_linear > 0.05:
-            if abs(v_turn) > 0.02:
+            if abs(v_turn) > 0.05:
                 self.state = "FOLLOW_CURVE_RIGHT" if v_turn > 0 else "FOLLOW_CURVE_LEFT"
             else:
                 self.state = "FOLLOW_STRAIGHT"
         else:
-            if abs(v_turn) > 0.02:
+            if abs(v_turn) > 0.05:
                 self.state = "PIVOT_RIGHT" if v_turn > 0 else "PIVOT_LEFT"
             else:
                 self.state = "HOLD_SWEET_SPOT"
@@ -569,10 +436,8 @@ class Stage2DistanceFollower:
             # Record telemetry
             obs = self._last_observation
             v_telem = self.vision.get_telemetry()
-            left_d, mid_d, right_d = self.sensors.get_distances()
-            dist_m, source = self._estimate_human_distance(
-                obs, left_dist=left_d, mid_dist=mid_d, right_dist=right_d
-            )
+            _, mid_d, _ = self.sensors.get_distances()
+            dist_m, source = self._estimate_human_distance(obs, mid_dist=mid_d)
 
             self._telemetry = {
                 "state": state,
@@ -585,9 +450,6 @@ class Stage2DistanceFollower:
                 "confidence": round(obs.confidence, 2),
                 "target_valid": obs.target_valid,
                 "bbox": list(obs.bbox) if (obs.target_valid and obs.bbox is not None) else None,
-                "tof_left": round(left_d, 2),
-                "tof_mid": round(mid_d, 2),
-                "tof_right": round(right_d, 2),
                 "fps": v_telem.get("fps", 0.0),
                 "inf_ms": v_telem.get("inference_ms", 0.0),
             }
@@ -604,7 +466,7 @@ class Stage2DistanceFollower:
     def stop(self) -> None:
         """Safely halt robot motors and release hardware resources."""
         self._running = False
-        self._set_wheel_velocities(0.0, 0.0, immediate_stop=True)
+        self._set_wheel_velocities(0.0, 0.0)
 
         if self._ser is not None:
             try:

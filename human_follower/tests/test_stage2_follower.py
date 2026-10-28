@@ -131,53 +131,6 @@ class TestStage2Follower(unittest.TestCase):
         self.assertEqual(vl, 0.0)
         self.assertEqual(vr, 0.0)
 
-    def test_forward_sway_rejection(self):
-        # Target walking away (1.80m), human gait swaying laterally (h_err = +0.10, within forward deadband 0.14)
-        # Robot should drive straight ahead without jerky left-right twitching
-        t0 = time.monotonic()
-        obs = TargetObservation(
-            target_valid=True,
-            confidence=0.90,
-            horizontal_error=+0.10,
-            distance=1.80,
-            timestamp=t0,
-        )
-        vl, vr, state = self.follower.step(obs, mock_mid_tof=1.80)
-        self.assertEqual(state, "FOLLOW_STRAIGHT")
-        self.assertAlmostEqual(vl, vr, places=3)
-
-    def test_side_tof_emergency_stop(self):
-        # Center ToF missed (9.99), but Left ToF detects obstacle/person at 0.30m (< 0.45m)
-        t0 = time.monotonic()
-        obs = TargetObservation(
-            target_valid=True,
-            confidence=0.90,
-            horizontal_error=-0.15,
-            distance=1.50,
-            timestamp=t0,
-        )
-        vl, vr, state = self.follower.step(obs, mock_tofs=(0.30, 9.99, 9.99))
-        self.assertEqual(state, "SAFETY_STOP")
-        self.assertEqual(vl, 0.0)
-        self.assertEqual(vr, 0.0)
-
-    def test_large_bounding_box_prevents_forward_overrun(self):
-        # All ToF lasers momentarily missed (9.99), but vision bounding box fills 75% of vertical height
-        # Robot must NOT drive forward into the person!
-        t0 = time.monotonic()
-        obs = TargetObservation(
-            target_valid=True,
-            confidence=0.90,
-            horizontal_error=0.02,
-            bbox=(100, 20, 300, 400),  # 380 px tall on 480 px frame (79% height)
-            timestamp=t0,
-        )
-        vl, vr, state = self.follower.step(obs, mock_tofs=(9.99, 9.99, 9.99))
-        # Since estimated distance is <= 0.95m (< sweet_spot_max 1.4m), forward drive is 0
-        self.assertEqual(state, "HOLD_SWEET_SPOT")
-        self.assertEqual(vl, 0.0)
-        self.assertEqual(vr, 0.0)
-
     def test_full_lifecycle(self):
         self.assertTrue(self.follower.start())
         time.sleep(0.3)
@@ -192,4 +145,3 @@ class TestStage2Follower(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
