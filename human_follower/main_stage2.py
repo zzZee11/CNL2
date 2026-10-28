@@ -47,14 +47,16 @@ def draw_stage2_overlay(frame, telem):
     # Frame center crosshair
     cv2.drawMarker(frame, (cx_frame, cy_frame), (255, 255, 255), cv2.MARKER_CROSS, 20, 1)
 
-    state = telem.get("state", "SEARCHING")
-    dist = telem.get("dist_m", 0.0)
-    source = telem.get("dist_source", "")
-    vl = telem.get("v_left", 0.0)
-    vr = telem.get("v_right", 0.0)
-    h_err = telem.get("h_err", 0.0)
-    bearing = telem.get("bearing_deg", 0.0)
-    conf = telem.get("confidence", 0.0)
+    state = telem.get("state") or "SEARCHING"
+    raw_dist = telem.get("dist_m")
+    dist = float(raw_dist) if raw_dist is not None else 0.0
+    source = telem.get("dist_source") or "UNK"
+    vl = float(telem.get("v_left", 0.0) or 0.0)
+    vr = float(telem.get("v_right", 0.0) or 0.0)
+    h_err = float(telem.get("h_err", 0.0) or 0.0)
+    bearing = float(telem.get("bearing_deg", 0.0) or 0.0)
+    raw_conf = telem.get("confidence")
+    conf = float(raw_conf) if raw_conf is not None else 0.0
 
     # Draw target bounding box if available
     bbox = telem.get("bbox")
@@ -175,16 +177,18 @@ def main():
             now = time.monotonic()
 
             if now - last_log_t >= 0.4:
-                state = telem.get("state", "SEARCHING")
-                dist = telem.get("dist_m", 0.0)
-                source = telem.get("dist_source", "UNK")
-                vl = telem.get("v_left", 0.0)
-                vr = telem.get("v_right", 0.0)
-                herr = telem.get("h_err", 0.0)
-                fps = telem.get("fps", 0.0)
+                state = telem.get("state") or "SEARCHING"
+                dist = telem.get("dist_m")
+                dist_val = float(dist) if dist is not None else 0.0
+                source = telem.get("dist_source") or "UNK"
+                vl = float(telem.get("v_left", 0.0) or 0.0)
+                vr = float(telem.get("v_right", 0.0) or 0.0)
+                herr = float(telem.get("h_err", 0.0) or 0.0)
+                fps = float(telem.get("fps", 0.0) or 0.0)
+                tof_m = float(telem.get("tof_mid", 9.99) or 9.99)
                 print(
-                    f"[{state:^17}] Dist: {dist:4.2f}m [{source:^14}] | "
-                    f"Err: {herr:+5.2f} | Wheels: L={vl:+5.2f}, R={vr:+5.2f} m/s | FPS: {fps:4.1f}"
+                    f"[{state:^17}] Dist: {dist_val:4.2f}m [{source:^12}] | "
+                    f"ToF_M: {tof_m:4.2f}m | Err: {herr:+5.2f} | Wheels: L={vl:+5.2f}, R={vr:+5.2f} m/s | FPS: {fps:4.1f}"
                 )
                 last_log_t = now
 

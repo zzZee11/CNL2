@@ -41,10 +41,10 @@ constexpr bool INVERT_RIGHT_ENCODER = false;
 // ==========================================
 
 // Wheel radius in metres
-constexpr float WHEEL_RADIUS_M = 0.02f;
+constexpr float WHEEL_RADIUS_M = 0.0215f;
 
 // Distance between left and right wheel centres
-constexpr float WHEEL_BASE_M = 0.13f;
+constexpr float WHEEL_BASE_M = 0.134f;
 
 // Actual encoder counts per wheel revolution.
 // IMPORTANT: Replace with your measured value.
