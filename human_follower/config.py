@@ -48,8 +48,8 @@ class FollowerConfig:
     confidence_threshold: float = 0.40 # Minimum detection confidence
     
     # ── Robot Hardware Geometry ───────────────────────────────────────────────
-    wheel_base_m: float = 0.13         # Distance between left and right wheel centers
-    wheel_radius_m: float = 0.02       # Radius of wheels in meters
+    wheel_base_m: float = 0.134        # Distance between left and right wheel centers
+    wheel_radius_m: float = 0.0215     # Radius of wheels in meters
     
     # ── Vision & Camera ───────────────────────────────────────────────────────
     camera_index: int = 0

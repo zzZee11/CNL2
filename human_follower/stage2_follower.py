@@ -93,8 +93,8 @@ class Stage2Config:
     confidence_threshold: float = 0.40 # Minimum detection confidence
     
     # ── Hardware & Camera Settings ────────────────────────────────────────────
-    wheel_base_m: float = 0.13
-    wheel_radius_m: float = 0.02
+    wheel_base_m: float = 0.134
+    wheel_radius_m: float = 0.0215
     camera_index: int = 0
     camera_width: int = 640
     camera_height: int = 480

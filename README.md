@@ -500,14 +500,14 @@ All active firmware configuration constants are defined in [`RobotController/Con
 | `LEFT_ENCODER_B` | `GPIO 2` | Left encoder channel B (direction sensing) |
 | `RIGHT_ENCODER_A` | `GPIO 12` | Right encoder channel A (interrupt attached on `CHANGE`) |
 | `RIGHT_ENCODER_B` | `GPIO 13` | Right encoder channel B (direction sensing) |
-| `TICKS_PER_REVOLUTION` | `360.0f` | Encoder tick counts per single wheel revolution |
+| `TICKS_PER_REVOLUTION` | `720.0f` | Encoder tick counts per single wheel revolution |
 
 ### Wheel Geometry
 
 | Parameter | Value | Description |
 |---|---|---|
-| `WHEEL_RADIUS_M` | `0.05f` (5 cm) | Wheel radius in metres (converts linear m/s to angular RPM) |
-| `WHEEL_BASE_M` | `0.20f` (20 cm) | Track width / distance between left and right wheel centres |
+| `WHEEL_RADIUS_M` | `0.0215f` (2.15 cm) | Wheel radius in metres (converts linear m/s to angular RPM) |
+| `WHEEL_BASE_M` | `0.134f` (13.4 cm) | Track width / distance between left and right wheel centres |
 
 ### Closed-Loop PID Speed Controller
 

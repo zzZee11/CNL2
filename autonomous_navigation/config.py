@@ -19,9 +19,9 @@ WATCHDOG_TIMEOUT_MS = 500     # ESP32 auto-stops if link lost for > 500 ms
 # ROBOT PHYSICAL DIMENSIONS & ODOMETRY
 # ==========================================
 # Must match RobotController/Config.h
-WHEEL_RADIUS_M = 0.020        # 2 cm radius (4 cm diameter)
-WHEEL_BASE_M = 0.130          # 13 cm track width between left and right wheels
-TICKS_PER_REV = 360.0         # Measured encoder counts per single wheel turn
+WHEEL_RADIUS_M = 0.0215       # 2.15 cm radius
+WHEEL_BASE_M = 0.134          # 13.4 cm track width between left and right wheels
+TICKS_PER_REV = 720.0         # Measured encoder counts per single wheel turn (Config.h)
 
 # ==========================================
 # STARTUP PUSH & DEFAULT SPEEDS

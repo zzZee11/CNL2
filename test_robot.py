@@ -8,8 +8,9 @@ PORT = "/dev/serial0"
 BAUD = 115200
 
 # Must match the ESP32 Config.h and your actual hardware.
-WHEEL_RADIUS_M = 0.020
-TICKS_PER_REV = 360.0  # Verify experimentally!
+WHEEL_RADIUS_M = 0.0215
+WHEEL_BASE_M = 0.134
+TICKS_PER_REV = 720.0  # Synced with RobotController/Config.h (720.0 ticks/rev)
 
 # Startup push & cruise configuration:
 PUSH_SPEED_MPS = 0.80     # Max power speed demand (forces ESP32 PID output to 255 PWM)
