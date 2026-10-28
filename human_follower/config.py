@@ -17,8 +17,9 @@ class FollowerConfig:
     watchdog_timeout_s: float = 0.45   # Serial command timeout
     
     # ── Stage 1 Turret Turning Controls ───────────────────────────────────────
-    kp_turn: float = 0.35              # Proportional gain: determines base turning speed
-    kd_turn: float = 0.12              # Derivative damping gain: acts as virtual brake against overshoot
+    kp_turn: float = 0.30              # Proportional gain: determines base turning speed
+    kd_turn: float = 0.08              # Derivative damping gain: acts as virtual brake against overshoot
+    max_accel_mps2: float = 0.85       # Slew-rate acceleration limit (m/s^2): eliminates motor chatter/jerks
     
     # ── Hysteresis Deadband (Eliminates Hunting / Chattering) ──────────────────
     # Outside deadband_exit (e.g. |err| > 0.10): robot starts pivoting
@@ -28,8 +29,8 @@ class FollowerConfig:
     deadband: float = 0.08             # Backward compatibility default
     
     # ── Speed Boundaries for Gentle Pivoting ──────────────────────────────────
-    min_turn_speed: float = 0.12       # Gentle minimum wheel speed (m/s) for small corrections
-    max_turn_speed: float = 0.28       # Capped maximum wheel speed (m/s) to prevent overshooting
+    min_turn_speed: float = 0.10       # Gentle minimum wheel speed (m/s) for small corrections
+    max_turn_speed: float = 0.24       # Capped maximum wheel speed (m/s) to prevent overshooting
     
     # ── Startup Kick for Turns ────────────────────────────────────────────────
     # Disabled for in-place pivots: differential pivots have low inertia and high kick causes overshooting

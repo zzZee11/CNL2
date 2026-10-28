@@ -54,7 +54,8 @@ class TurretFollower:
         # Tracking controller state (PD + Hysteresis)
         self._is_pivoting: bool = False
         self._last_error: float = 0.0
-        self._last_error_time: float = 0.0
+        self._last_obs_timestamp: float = 0.0
+        self._smoothed_d_err: float = 0.0
 
         # Vision Service initialization
         v_config = VisionConfig(
@@ -112,8 +113,12 @@ class TurretFollower:
             self._ser = None
 
     def _serial_tx_worker(self) -> None:
-        """Continuously streams velocity packets at 20 Hz to keep the ESP32 watchdog refreshed."""
+        """Continuously streams velocity packets at 20 Hz with slew-rate acceleration ramping."""
         interval = 1.0 / self.config.tx_rate_hz
+        max_delta_v = self.config.max_accel_mps2 * interval
+
+        current_cmd_l = 0.0
+        current_cmd_r = 0.0
 
         while self._running:
             t0 = time.monotonic()
@@ -125,17 +130,22 @@ class TurretFollower:
 
             # Apply startup kick only if explicitly enabled
             if is_kicking:
-                kick_speed = self.config.turn_kick_speed
-                cmd_l = (kick_speed if vl > 0 else -kick_speed) if abs(vl) > 0.01 else 0.0
-                cmd_r = (kick_speed if vr > 0 else -kick_speed) if abs(vr) > 0.01 else 0.0
+                target_l = (self.config.turn_kick_speed if vl > 0 else -self.config.turn_kick_speed) if abs(vl) > 0.01 else 0.0
+                target_r = (self.config.turn_kick_speed if vr > 0 else -self.config.turn_kick_speed) if abs(vr) > 0.01 else 0.0
             else:
-                cmd_l = vl
-                cmd_r = vr
+                target_l = vl
+                target_r = vr
+
+            # Slew-rate acceleration limiter: smoothly ramps velocity to eliminate motor chatter
+            diff_l = target_l - current_cmd_l
+            diff_r = target_r - current_cmd_r
+            current_cmd_l += max(-max_delta_v, min(max_delta_v, diff_l))
+            current_cmd_r += max(-max_delta_v, min(max_delta_v, diff_r))
 
             # Send over UART: "<left_mps>,<right_mps>\n"
             if self._ser is not None:
                 try:
-                    packet = f"{cmd_l:.2f},{cmd_r:.2f}\n".encode("ascii")
+                    packet = f"{current_cmd_l:.2f},{current_cmd_r:.2f}\n".encode("ascii")
                     self._ser.write(packet)
                     self._ser.flush()
                 except Exception:
@@ -190,18 +200,24 @@ class TurretFollower:
         if abs(h_err) <= active_deadband:
             self._set_wheel_velocities(0.0, 0.0)
             self._is_pivoting = False
+            self._smoothed_d_err = 0.0
             self._last_error = h_err
-            self._last_error_time = now
+            self._last_obs_timestamp = obs.timestamp
             self.state = "LOCKED_CENTER"
             return 0.0, 0.0, self.state
 
         self._is_pivoting = True
 
-        # ── 2. Derivative Error Calculation (Virtual Brake) ───────────────────
-        dt = max(0.01, now - self._last_error_time) if self._last_error_time > 0 else 0.05
-        d_err = (h_err - self._last_error) / dt
-        self._last_error = h_err
-        self._last_error_time = now
+        # ── 2. Derivative Error Calculation (Only on Fresh Camera Frames) ─────
+        if obs.timestamp > self._last_obs_timestamp:
+            dt = max(0.02, obs.timestamp - self._last_obs_timestamp)
+            raw_d_err = (h_err - self._last_error) / dt
+            # Low-pass filter to reject single-frame pixel jitter spikes
+            self._smoothed_d_err = 0.40 * raw_d_err + 0.60 * self._smoothed_d_err
+            self._last_error = h_err
+            self._last_obs_timestamp = obs.timestamp
+
+        d_err = self._smoothed_d_err
 
         # ── 3. Smooth Non-Linear Power Easing ──────────────────────────────────
         # Computes proportional speed scaled smoothly above deadband without abrupt step-jumps
