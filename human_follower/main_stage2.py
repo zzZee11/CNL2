@@ -47,6 +47,15 @@ def draw_stage2_overlay(frame, telem):
     # Frame center crosshair
     cv2.drawMarker(frame, (cx_frame, cy_frame), (255, 255, 255), cv2.MARKER_CROSS, 20, 1)
 
+    state = telem.get("state", "SEARCHING")
+    dist = telem.get("dist_m", 0.0)
+    source = telem.get("dist_source", "")
+    vl = telem.get("v_left", 0.0)
+    vr = telem.get("v_right", 0.0)
+    h_err = telem.get("h_err", 0.0)
+    bearing = telem.get("bearing_deg", 0.0)
+    conf = telem.get("confidence", 0.0)
+
     # Draw target bounding box if available
     bbox = telem.get("bbox")
     if bbox is not None and len(bbox) == 4:
@@ -63,20 +72,11 @@ def draw_stage2_overlay(frame, telem):
         cv2.line(frame, (cx_frame, cy_frame), (tcx, tcy), (0, 255, 255), 1)
 
         # Tracking badge above the box
-        conf = telem.get("confidence", 0.0)
         label = f"TRACKING: {conf:.0%} | {dist:.2f}m [{source}]"
         cv2.putText(
             frame, label, (x1, max(22, y1 - 8)),
             cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2
         )
-
-    state = telem.get("state", "SEARCHING")
-    dist = telem.get("dist_m", 0.0)
-    source = telem.get("dist_source", "")
-    vl = telem.get("v_left", 0.0)
-    vr = telem.get("v_right", 0.0)
-    h_err = telem.get("h_err", 0.0)
-    bearing = telem.get("bearing_deg", 0.0)
 
     # State colors and banners
     if state == "HOLD_SWEET_SPOT":
