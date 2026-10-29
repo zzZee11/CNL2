@@ -13,13 +13,13 @@ class TestStage3Follower(unittest.TestCase):
         self.config = Stage3Config(
             mock=True,
             headless=True,
-            target_distance_m=1.20,
+            target_distance_m=1.00,
             distance_deadband_m=0.20,
             emergency_stop_dist_m=0.35,
             obstacle_safe_dist_m=0.65,
             min_forward_speed=0.15,
             max_forward_speed=0.40,
-            k_rep=0.25,
+            k_rep=0.20,
             target_timeout_s=1.0,
         )
         self.follower = Stage3ObstacleFollower(self.config)
@@ -77,36 +77,43 @@ class TestStage3Follower(unittest.TestCase):
         self.assertLessEqual(vl, self.config.max_forward_speed)
         self.assertAlmostEqual(vl, vr, places=3)
 
-    def test_human_distance_estimated_from_vision_only(self):
-        # Even if sensors read arbitrary values (e.g. 0.80m on side),
-        # human distance must be strictly computed from vision!
+    def test_human_distance_sensor_fusion(self):
+        # 1. Close range centered person: ToF Laser takes precedence
         t0 = time.monotonic()
-        obs = TargetObservation(
+        obs_close = TargetObservation(
             target_valid=True,
             confidence=0.90,
-            horizontal_error=0.0,
-            distance=2.20,
+            horizontal_error=0.05,
+            distance=1.35,
             timestamp=t0,
         )
-        dist_m, source = self.follower._estimate_human_distance(obs)
-        self.assertEqual(dist_m, 2.20)
-        self.assertEqual(source, "VISION")
+        dist_m, source = self.follower._estimate_human_distance(obs_close, mid_dist=1.25)
+        self.assertEqual(dist_m, 1.25)
+        self.assertEqual(source, "TOF_LASER")
 
-    def test_vision_bbox_distance_fallback(self):
-        # If obs.distance is None, calculates distance geometrically from bbox height
-        t0 = time.monotonic()
-        obs = TargetObservation(
+        # 2. Long range: ToF is out of range (> 1.85m), falls back to Vision Proxy
+        obs_far = TargetObservation(
             target_valid=True,
             confidence=0.90,
-            horizontal_error=0.0,
-            bbox=(100, 50, 300, 350),  # 300 px height
-            distance=None,
+            horizontal_error=0.02,
+            distance=2.40,
             timestamp=t0,
         )
-        dist_m, source = self.follower._estimate_human_distance(obs)
-        self.assertGreater(dist_m, 0.5)
-        self.assertLess(dist_m, 8.0)
-        self.assertEqual(source, "VISION_BBOX")
+        dist_m, source = self.follower._estimate_human_distance(obs_far, mid_dist=9.99)
+        self.assertEqual(dist_m, 2.40)
+        self.assertEqual(source, "VISION_PROXY")
+
+        # 3. Target offset horizontally: ignores center ToF and uses Vision Proxy
+        obs_off_center = TargetObservation(
+            target_valid=True,
+            confidence=0.90,
+            horizontal_error=0.35,
+            distance=1.60,
+            timestamp=t0,
+        )
+        dist_m, source = self.follower._estimate_human_distance(obs_off_center, mid_dist=0.80)
+        self.assertEqual(dist_m, 1.60)
+        self.assertEqual(source, "VISION_PROXY")
 
     def test_left_obstacle_evasion(self):
         # Human straight ahead at 1.80m, obstacle on the left (left ToF = 0.45m < 0.65m safe dist)
