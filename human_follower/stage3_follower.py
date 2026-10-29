@@ -47,17 +47,18 @@ class Stage3Config:
     watchdog_timeout_s: float = 0.45   # Serial command timeout
     
     # ── Stage 2 Distance Regulation Controls ──────────────────────────────────
-    target_distance_m: float = 1.00    # Desired distance to maintain from the human (meters)
+    target_distance_m: float = 1.20    # Desired distance to maintain from the human (meters)
     distance_deadband_m: float = 0.20  # +/- 20 cm sweet spot: between (target - 0.2) and (target + 0.2), v_lin = 0
     kp_dist: float = 0.55              # Proportional gain for forward velocity: v = Kp * distance_error
     min_forward_speed: float = 0.15    # Minimum forward speed (m/s) to overcome DC motor gearbox stiction
     max_forward_speed: float = 0.45    # Maximum cruising forward speed (m/s)
-    emergency_stop_dist_m: float = 0.35 # Distance threshold below which robot halts immediately
+    emergency_stop_dist_m: float = 0.25 # Distance threshold below which robot halts immediately
     
     # ── Obstacle Avoidance Parameters (Layered on top of Stage 2) ─────────────
-    obstacle_safe_dist_m: float = 0.30 # Distance below which obstacles start repelling robot (meters)
+    obstacle_safe_dist_m: float = 0.50 # Distance below which obstacles start repelling robot (meters)
     k_rep: float = 0.20                # Obstacle repulsion gain
-    max_rep_turn_speed: float = 0.20   # Maximum differential turn bias from obstacles (m/s)
+    max_rep_turn_speed: float = 0.10   # Maximum differential turn bias from obstacles (m/s) - gentle steering
+    swap_left_right_tofs: bool = False # Swap left and right ToF inputs if physical wiring is reversed
     # Sensor mount angles in radians relative to robot forward (+ is Left, - is Right)
     sensor_angles_rad: Tuple[float, float, float] = (
         math.radians(+45.0),  # Left ToF
@@ -107,6 +108,8 @@ class Stage3Config:
     def validate(self) -> None:
         if self.target_distance_m <= self.emergency_stop_dist_m:
             raise ValueError("target_distance_m must be greater than emergency_stop_dist_m.")
+        if self.obstacle_safe_dist_m <= self.emergency_stop_dist_m:
+            raise ValueError("obstacle_safe_dist_m must be greater than emergency_stop_dist_m.")
         if self.min_forward_speed > self.max_forward_speed:
             raise ValueError("min_forward_speed cannot exceed max_forward_speed.")
 
@@ -128,6 +131,7 @@ class Stage3ObstacleFollower:
         self._target_v_right: float = 0.0
         self._forward_kick_until: float = 0.0
         self._emergency_stop: bool = False
+        self._last_obs_bias: float = 0.0
 
         # State tracking
         self.state: str = "INITIALIZING"
@@ -424,12 +428,17 @@ class Stage3ObstacleFollower:
         else:
             left_d, mid_d, right_d = self.sensors.get_distances()
 
-        # ── 1. HARD SAFETY SHIELD (< 0.35m immediate halt) ────────────────────
+        # Handle optional left/right sensor swap if wiring is physically inverted
+        if self.config.swap_left_right_tofs:
+            left_d, right_d = right_d, left_d
+
+        # ── 1. HARD SAFETY SHIELD (< emergency_stop_dist_m immediate halt) ────
         valid_tofs = [d for d in (left_d, mid_d, right_d) if 0.03 < d < 2.0]
         min_tof = min(valid_tofs) if valid_tofs else 9.99
 
         if min_tof < self.config.emergency_stop_dist_m:
             self._set_wheel_velocities(0.0, 0.0, immediate_stop=True)
+            self._last_obs_bias = 0.0
             self.state = "SAFETY_STOP"
             return 0.0, 0.0, self.state
 
@@ -438,6 +447,7 @@ class Stage3ObstacleFollower:
 
         if dist_m < self.config.emergency_stop_dist_m:
             self._set_wheel_velocities(0.0, 0.0, immediate_stop=True)
+            self._last_obs_bias = 0.0
             self.state = "SAFETY_STOP"
             return 0.0, 0.0, self.state
 
@@ -490,47 +500,68 @@ class Stage3ObstacleFollower:
 
         # ── 4. LAYERED TOF OBSTACLE AVOIDANCE ─────────────────────────────────
         safe_d = self.config.obstacle_safe_dist_m
+        em_d = self.config.emergency_stop_dist_m
         delta_turn_obs = 0.0
         avoiding_obstacle = False
 
-        # Left ToF Obstacle -> Deflect Right (+ turn bias)
-        if 0.03 < left_d < safe_d:
-            rep_left = self.config.k_rep * ((1.0 / left_d) - (1.0 / safe_d)) * (1.0 / (left_d ** 1.5))
-            rep_turn_l = min(self.config.max_rep_turn_speed, max(0.08, rep_left * 0.15))
-            delta_turn_obs += rep_turn_l
-            avoiding_obstacle = True
-
-        # Right ToF Obstacle -> Deflect Left (- turn bias)
-        if 0.03 < right_d < safe_d:
-            rep_right = self.config.k_rep * ((1.0 / right_d) - (1.0 / safe_d)) * (1.0 / (right_d ** 1.5))
-            rep_turn_r = min(self.config.max_rep_turn_speed, max(0.08, rep_right * 0.15))
-            delta_turn_obs -= rep_turn_r
-            avoiding_obstacle = True
-
-        # Middle ToF Obstacle -> Slow down or push laterally if obstacle is blocking front
-        if 0.03 < mid_d < safe_d:
-            is_target_human = abs(obs.horizontal_error) < 0.25 and abs(mid_d - dist_m) < 0.25
-            if not is_target_human:
-                # Obstacle directly ahead: slow down linear drive
-                clearance_ratio = max(0.0, (mid_d - self.config.emergency_stop_dist_m) / (safe_d - self.config.emergency_stop_dist_m))
-                v_linear *= max(0.20, clearance_ratio)
-                # Deflect away from whichever side has less clearance
-                if delta_turn_obs == 0.0:
-                    delta_turn_obs = +0.12 if left_d >= right_d else -0.12
+        # Only apply obstacle avoidance turn bias when robot is actively driving forward!
+        # When stopped or holding sweet spot, robot holds position facing the target.
+        if is_forward_drive:
+            # Left ToF Obstacle -> Smooth quadratic deflection to the Right (+ turn bias)
+            if 0.05 < left_d < safe_d:
+                ratio = max(0.0, min(1.0, (safe_d - left_d) / max(0.01, safe_d - em_d)))
+                rep_turn_l = self.config.max_rep_turn_speed * (ratio ** 2)
+                delta_turn_obs += rep_turn_l
                 avoiding_obstacle = True
+
+            # Right ToF Obstacle -> Smooth quadratic deflection to the Left (- turn bias)
+            if 0.05 < right_d < safe_d:
+                ratio = max(0.0, min(1.0, (safe_d - right_d) / max(0.01, safe_d - em_d)))
+                rep_turn_r = self.config.max_rep_turn_speed * (ratio ** 2)
+                delta_turn_obs -= rep_turn_r
+                avoiding_obstacle = True
+
+            # Middle ToF Obstacle:
+            # When tracking a human, the human in front is handled by distance regulation.
+            # Only treat center sensor as an obstacle if it is NOT the tracked human:
+            if 0.05 < mid_d < safe_d:
+                is_human_center = obs.target_valid and abs(obs.horizontal_error) < 0.30
+                if not is_human_center:
+                    clearance_ratio = max(0.0, (mid_d - em_d) / max(0.01, safe_d - em_d))
+                    v_linear *= max(0.20, clearance_ratio)
+                    # Deflect toward side with noticeably more clearance
+                    if abs(delta_turn_obs) < 0.01:
+                        if left_d > right_d + 0.10:
+                            delta_turn_obs = -0.06  # Steer left towards open clearance
+                            avoiding_obstacle = True
+                        elif right_d > left_d + 0.10:
+                            delta_turn_obs = +0.06  # Steer right towards open clearance
+                            avoiding_obstacle = True
+
+        self._last_obs_bias = delta_turn_obs
 
         # Combine Human Heading Turn and Obstacle Steering Bias
         v_turn = v_turn_human + delta_turn_obs
         v_turn = max(-self.config.max_turn_speed, min(self.config.max_turn_speed, v_turn))
 
-        # Turn factor reduction on forward speed when turning sharply
-        if abs(h_err) > 0.20 or abs(delta_turn_obs) > 0.05:
-            scale_factor = max(0.30, math.cos(math.radians(obs.bearing_deg)))
-            v_linear *= scale_factor
-
         # ── 5. Kinematics Fusion ──────────────────────────────────────────────
-        vl = v_linear + v_turn
-        vr = v_linear - v_turn
+        if is_forward_drive:
+            # Forward drive with turn factor reduction for sharp turns
+            if abs(h_err) > 0.20 or abs(delta_turn_obs) > 0.05:
+                scale_factor = max(0.35, math.cos(math.radians(obs.bearing_deg)))
+                v_linear *= scale_factor
+
+            # Modulate wheel speeds while ensuring inner wheel doesn't drop into reverse during forward pursuit
+            if v_turn > 0:  # Steering right: left wheel faster, right wheel slower
+                vl = min(self.config.max_forward_speed, v_linear + v_turn)
+                vr = max(0.06, v_linear - v_turn)
+            else:           # Steering left: right wheel faster, left wheel slower
+                vl = max(0.06, v_linear + v_turn)
+                vr = min(self.config.max_forward_speed, v_linear - v_turn)
+        else:
+            # Pure pivoting in place (Stage 1 anti-overshoot heading adjustment)
+            vl = v_turn
+            vr = -v_turn
 
         max_limit = self.config.max_forward_speed + 0.05
         vl = max(-max_limit, min(max_limit, vl))
@@ -582,6 +613,7 @@ class Stage3ObstacleFollower:
                 "tof_left": round(left_d, 2),
                 "tof_mid": round(mid_d, 2),
                 "tof_right": round(right_d, 2),
+                "obs_bias": round(self._last_obs_bias, 3),
                 "f_att": [round(f_att[0], 2), round(f_att[1], 2)],
                 "f_rep": [round(f_rep[0], 2), round(f_rep[1], 2)],
                 "f_net": [round(f_net[0], 2), round(f_net[1], 2)],
