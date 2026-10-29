@@ -47,17 +47,17 @@ class Stage3Config:
     watchdog_timeout_s: float = 0.45   # Serial command timeout
     
     # ── Stage 2 Distance Regulation Controls ──────────────────────────────────
-    target_distance_m: float = 1.20    # Desired distance to maintain from the human (meters)
+    target_distance_m: float = 1.00    # Desired distance to maintain from the human (meters)
     distance_deadband_m: float = 0.20  # +/- 20 cm sweet spot: between (target - 0.2) and (target + 0.2), v_lin = 0
     kp_dist: float = 0.55              # Proportional gain for forward velocity: v = Kp * distance_error
-    min_forward_speed: float = 0.15    # Minimum forward speed (m/s) to overcome DC motor gearbox stiction
+    min_forward_speed: float = 0.20    # Minimum forward speed (m/s) to overcome DC motor gearbox stiction
     max_forward_speed: float = 0.45    # Maximum cruising forward speed (m/s)
     emergency_stop_dist_m: float = 0.25 # Distance threshold below which robot halts immediately
     
     # ── Obstacle Avoidance Parameters (Layered on top of Stage 2) ─────────────
     obstacle_safe_dist_m: float = 0.50 # Distance below which obstacles start repelling robot (meters)
-    k_rep: float = 0.20                # Obstacle repulsion gain
-    max_rep_turn_speed: float = 0.10   # Maximum differential turn bias from obstacles (m/s) - gentle steering
+    k_rep: float = 0.10                # Obstacle repulsion gain
+    max_rep_turn_speed: float = 0.05   # Maximum differential turn bias from obstacles (m/s) - gentle steering
     swap_left_right_tofs: bool = False # Swap left and right ToF inputs if physical wiring is reversed
     # Sensor mount angles in radians relative to robot forward (+ is Left, - is Right)
     sensor_angles_rad: Tuple[float, float, float] = (
@@ -72,7 +72,7 @@ class Stage3Config:
     deadband_turn_exit: float = 0.10   # Trigger threshold to start steering (10% of frame center)
     deadband_turn_enter: float = 0.05  # Settle threshold to stop steering (5% of frame center)
     min_turn_speed: float = 0.12       # Minimum gentle turn speed (m/s)
-    max_turn_speed: float = 0.20       # Maximum turn speed clamp (m/s)
+    max_turn_speed: float = 0.15       # Maximum turn speed clamp (m/s)
     
     # ── Forward Startup Kick ──────────────────────────────────────────────────
     enable_forward_kick: bool = True
