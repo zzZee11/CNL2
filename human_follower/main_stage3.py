@@ -175,11 +175,8 @@ def main():
     parser.add_argument("--baud", type=int, default=115200, help="Serial baud rate")
     parser.add_argument("--target-dist", type=float, default=1.20, help="Desired following distance in meters (default: 1.20m)")
     parser.add_argument("--max-speed", type=float, default=0.40, help="Maximum forward cruising speed (default: 0.40 m/s)")
-    parser.add_argument("--k-rep", type=float, default=0.20, help="APF obstacle repulsive gain (default: 0.20)")
-    parser.add_argument("--safe-dist", type=float, default=0.50, help="Obstacle detection clearance boundary in meters (default: 0.50m)")
-    parser.add_argument("--emergency-dist", type=float, default=0.25, help="Emergency stop threshold in meters (default: 0.25m)")
-    parser.add_argument("--max-rep-turn", type=float, default=0.10, help="Maximum steering bias from obstacles in m/s (default: 0.10 m/s)")
-    parser.add_argument("--swap-tofs", action="store_true", help="Swap Left and Right ToF sensor inputs if physically reversed")
+    parser.add_argument("--k-rep", type=float, default=0.25, help="APF obstacle repulsive gain (default: 0.25)")
+    parser.add_argument("--safe-dist", type=float, default=0.65, help="Obstacle detection clearance boundary in meters (default: 0.65m)")
     parser.add_argument("--confidence", type=float, default=0.40, help="Person detection confidence threshold")
     args = parser.parse_args()
 
@@ -193,9 +190,6 @@ def main():
         max_forward_speed=args.max_speed,
         k_rep=args.k_rep,
         obstacle_safe_dist_m=args.safe_dist,
-        emergency_stop_dist_m=args.emergency_dist,
-        max_rep_turn_speed=args.max_rep_turn,
-        swap_left_right_tofs=args.swap_tofs,
         camera_index=args.camera,
         confidence_threshold=args.confidence,
         enable_preview=not headless,
@@ -248,13 +242,12 @@ def main():
                 tof_l = float(telem.get("tof_left", 9.99) or 9.99)
                 tof_m = float(telem.get("tof_mid", 9.99) or 9.99)
                 tof_r = float(telem.get("tof_right", 9.99) or 9.99)
-                obs_bias = float(telem.get("obs_bias", 0.0) or 0.0)
                 f_net = telem.get("f_net", [0.0, 0.0])
 
                 print(
                     f"[{state:^24}] Dist: {dist_val:4.2f}m [{source:^10}] | "
                     f"ToF: L={tof_l:4.2f} M={tof_m:4.2f} R={tof_r:4.2f}m | "
-                    f"Bias: {obs_bias:+5.2f} | Wheels: L={vl:+5.2f}, R={vr:+5.2f} m/s | FPS: {fps:4.1f}"
+                    f"Net: [{f_net[0]:+4.2f}, {f_net[1]:+4.2f}] | Wheels: L={vl:+5.2f}, R={vr:+5.2f} m/s | FPS: {fps:4.1f}"
                 )
                 last_log_t = now
 

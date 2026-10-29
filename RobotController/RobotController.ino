@@ -76,14 +76,11 @@ void loop() {
             / (2.0f * PI * WHEEL_RADIUS_M);
     }
 
-    // 4. Update commanded direction for encoder direction-assist fallback.
-    EncoderReader::setMotorDirections(targetLeftRPM >= 0.0f, targetRightRPM >= 0.0f);
-
-    // 5. Read encoder counts.
+    // 4. Read encoder counts.
     long leftTicks = encoders.getLeftTicks();
     long rightTicks = encoders.getRightTicks();
 
-    // 6. Update PID at the configured interval.
+    // 5. Update PID at the configured interval.
     if (speedPID.update(
             targetLeftRPM,
             targetRightRPM,
@@ -91,7 +88,7 @@ void loop() {
             rightTicks
         )) {
 
-        // 7. Apply the calculated PWM commands.
+        // 6. Apply the calculated PWM commands.
         motors.setSpeeds(
             static_cast<int>(speedPID.getLeftOutput()),
             static_cast<int>(speedPID.getRightOutput())
@@ -114,15 +111,13 @@ void loop() {
 
         // Optional USB debugging.
         Serial.print("Target RPM: ");
-        Serial.print(targetLeftRPM, 1);
+        Serial.print(targetLeftRPM);
         Serial.print(", ");
-        Serial.print(targetRightRPM, 1);
+        Serial.print(targetRightRPM);
 
         Serial.print(" | Actual RPM: ");
-        Serial.print(speedPID.getLeftRPM(), 1);
+        Serial.print(speedPID.getLeftRPM());
         Serial.print(", ");
-        Serial.print(speedPID.getRightRPM(), 1);
-        Serial.print(" | Mode: ");
-        Serial.println(EncoderReader::isLeftPhaseBHealthy() ? "2X-QUAD" : "1X-ASSIST");
+        Serial.println(speedPID.getRightRPM());
     }
 }

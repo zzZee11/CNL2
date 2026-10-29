@@ -1,26 +1,22 @@
 """
 autonomous_navigation/navigator.py
 -----------------------------------
-Autonomous Cartesian Plane & Distance Navigator with Dynamic Obstacle Avoidance.
-
-Capabilities:
-- 2D Cartesian plane target navigation to any coordinate (X, Y) in meters (e.g. (1.0, 5.0)).
-- Global A* grid path planning with dynamic replanning around obstacles.
-- Artificial Potential Field (APF) reactive local micro-avoidance.
-- Continuous 3x VL53L0X Time-of-Flight obstacle mapping with circular safety inflation.
-- Dead-reckoning closed-loop wheel odometry integration.
-- Automatic trajectory and obstacle map rendering to PNG image for analysis and testing.
+Autonomous Distance & Obstacle Avoidance Navigator.
+Combines:
+- A* Global Grid Search (for macro-level routing around detected obstacles)
+- Artificial Potential Field (APF) local vector avoidance (for real-time micro-evasion)
+- Dynamic ToF obstacle mapping with circular inflation
+- Closed-loop wheel odometry with dead-reckoning
+- Startup breakaway torque push
 """
 
 import time
 import math
-from typing import List, Tuple, Optional
 
 try:
     from .config import (
         DEFAULT_SPEED, SENSOR_ANGLES,
-        CRITICAL_STOP_DIST, TOF_MAX_RANGE_M,
-        DEFAULT_PLOT_PATH
+        CRITICAL_STOP_DIST, TOF_MAX_RANGE_M
     )
     from .planner import (
         create_empty_grid, mark_obstacle,
@@ -28,12 +24,10 @@ try:
         calculate_apf, calculate_kinematics,
         world_to_grid
     )
-    from .plotter import save_navigation_plot
 except ImportError:
     from config import (
         DEFAULT_SPEED, SENSOR_ANGLES,
-        CRITICAL_STOP_DIST, TOF_MAX_RANGE_M,
-        DEFAULT_PLOT_PATH
+        CRITICAL_STOP_DIST, TOF_MAX_RANGE_M
     )
     from planner import (
         create_empty_grid, mark_obstacle,
@@ -41,8 +35,6 @@ except ImportError:
         calculate_apf, calculate_kinematics,
         world_to_grid
     )
-    from plotter import save_navigation_plot
-
 
 class AutonomousNavigator:
     def __init__(self, serial_comm, sensor_mgr):
@@ -51,43 +43,17 @@ class AutonomousNavigator:
         self.grid = create_empty_grid()
         self.stop_requested = False
 
-        # Mission logging & trajectory history
-        self.last_trajectory: List[Tuple[float, float]] = []
-        self.last_obstacles: List[Tuple[float, float]] = []
-        self.last_planned_path: List[Tuple[float, float]] = []
-        self.last_plot_path: Optional[str] = None
-
-    def navigate_to(
-        self,
-        target_x: float,
-        target_y: float,
-        speed_mps: float = DEFAULT_SPEED,
-        save_plot: bool = True,
-        plot_path: str = DEFAULT_PLOT_PATH,
-    ) -> bool:
+    def move_distance(self, distance_m, speed_mps=DEFAULT_SPEED):
         """
-        Navigates the robot to the specified 2D Cartesian plane coordinate (target_x, target_y)
-        in meters relative to the start position (0, 0), dynamically mapping obstacles and
-        avoiding them using A* global planning and local APF.
-
-        Args:
-            target_x: Target position along the forward axis in meters (e.g. 1.0)
-            target_y: Target position along the lateral axis in meters (e.g. 5.0, + is Left, - is Right)
-            speed_mps: Target cruising speed in m/s (default: 0.60 m/s)
-            save_plot: If True, saves a PNG image of the trajectory and obstacles after the run
-            plot_path: Destination file path for the visualization image
+        Drives the robot the commanded distance (e.g. 5.0m) at the commanded speed (e.g. 0.8 m/s),
+        dynamically mapping obstacles with 3x ToF and avoiding them using A* and APF.
         """
         self.stop_requested = False
-        target_x = float(target_x)
-        target_y = float(target_y)
-        speed_mps = max(0.10, min(1.0, float(speed_mps)))
+        distance_m = float(distance_m)
+        speed_mps = max(0.1, min(1.0, float(speed_mps)))
 
-        goal_pos = (target_x, target_y)
-        start_pos = (0.0, 0.0)
-        direct_dist = math.hypot(target_x, target_y)
-
-        if direct_dist < 0.05:
-            print(f"[Nav] Target ({target_x:.2f}, {target_y:.2f}) is already at current position.")
+        if abs(distance_m) < 0.05:
+            print("[Nav] Distance is too small to travel.")
             return True
 
         # Wait until we have valid encoder telemetry from ESP32
@@ -103,90 +69,70 @@ class AutonomousNavigator:
         self.comm.reset_odometry(start_x=0.0, start_y=0.0, start_theta=0.0)
         self.grid = create_empty_grid()
 
-        # Telemetry history tracking
-        self.last_trajectory = [(0.0, 0.0)]
-        self.last_obstacles = []
-        self.last_planned_path = []
+        # Goal position is straight ahead along the X axis
+        goal_pos = (distance_m, 0.0)
+        start_pos = (0.0, 0.0)
 
         print(f"\n[Nav] ========================================================")
-        print(f"[Nav] MISSION: Navigate to Cartesian Target ({target_x:.2f}, {target_y:.2f}) m")
-        print(f"[Nav] Direct Distance: {direct_dist:.2f} m | Cruise Speed: {speed_mps:.2f} m/s")
-        print(f"[Nav] Obstacle Avoidance: ACTIVE (A* Global Grid + APF Local Vector)")
+        print(f"[Nav] TARGET: Move {distance_m:.2f} m at {speed_mps:.2f} m/s")
+        print(f"[Nav] Goal coordinates: ({goal_pos[0]:.2f}, {goal_pos[1]:.2f})")
+        print(f"[Nav] Obstacle avoidance: ACTIVE (A* Global + APF Local)")
         print(f"[Nav] ========================================================\n")
 
         # Compute initial global path
-        print(f"[Nav] Planning initial A* path from (0.0, 0.0) to ({target_x:.2f}, {target_y:.2f})...")
+        print("[Nav] Planning initial A* path...")
         waypoints = astar_grid(start_pos, goal_pos, self.grid)
         if not waypoints:
-            print("[Nav] Error: Could not compute initial path to goal.")
+            print("[Nav] Error: Could not compute initial path.")
             return False
 
-        self.last_planned_path = list(waypoints)
-        print(f"[Nav] Initial route found with {len(waypoints)} waypoints.")
-
         if len(waypoints) > 1:
-            waypoints.pop(0)  # Pop starting position
+            waypoints.pop(0)  # Remove current starting point
 
-        # Safety timeout: 3x expected travel time + 15s buffer
-        timeout = (direct_dist / speed_mps) * 3.5 + 15.0
+        # Safety timeout: 3x expected travel time + 10s buffer
+        timeout = (distance_m / speed_mps) * 3.0 + 10.0
         start_time = time.time()
         last_log_time = 0.0
-        mission_status = "FAILED"
 
         try:
             while not self.stop_requested and waypoints:
                 now = time.time()
                 if now - start_time > timeout:
                     print(f"\n[Nav] TIMEOUT: Mission took longer than {timeout:.1f}s.")
-                    mission_status = "TIMEOUT"
                     break
 
                 # 1. Get current pose and odometry
                 cur_x, cur_y, cur_theta, total_dist = self.comm.get_pose()
                 current_pos = (cur_x, cur_y)
 
-                # Append to trajectory history if moved significantly (> 2 cm)
-                last_pt = self.last_trajectory[-1]
-                if math.hypot(cur_x - last_pt[0], cur_y - last_pt[1]) >= 0.02:
-                    self.last_trajectory.append((cur_x, cur_y))
-
-                # Distance remaining to ultimate goal
-                dist_to_goal = math.hypot(target_x - cur_x, target_y - cur_y)
-                if dist_to_goal < 0.15:
-                    print(f"\n[Nav] GOAL REACHED! Distance to target: {dist_to_goal:.2f} m (< 0.15m tolerance).")
-                    mission_status = "GOAL REACHED"
+                # Distance remaining to the ultimate goal
+                dist_to_goal = math.hypot(goal_pos[0] - cur_x, goal_pos[1] - cur_y)
+                if dist_to_goal < 0.12 or total_dist >= (distance_m - 0.04):
+                    print(f"\n[Nav] GOAL REACHED! Total distance travelled: {total_dist:.2f} m.")
                     break
 
                 # 2. Read live ToF distance sensors [Left, Middle, Right]
                 tof_readings = self.sensors.get_distances()
 
-                # 3. Emergency brake if an obstacle suddenly appears critically close (< 0.18m)
-                if any(0.02 < d < CRITICAL_STOP_DIST for d in tof_readings):
-                    print(f"[Nav] EMERGENCY BRAKE: Critical hazard detected! Halting.")
+                # 3. Emergency brake if an obstacle suddenly appears critically close
+                if tof_readings[1] < CRITICAL_STOP_DIST:
+                    print(f"[Nav] EMERGENCY BRAKE: Obstacle detected at {tof_readings[1]:.2f} m!")
                     self.comm.stop()
-                    time.sleep(0.12)
-                    # Mark all close obstacles into grid
-                    for i in range(3):
-                        d = tof_readings[i]
-                        if 0.02 < d < CRITICAL_STOP_DIST:
-                            sensor_angle = cur_theta + SENSOR_ANGLES[i]
-                            obs_x = cur_x + (d * math.cos(sensor_angle))
-                            obs_y = cur_y + (d * math.sin(sensor_angle))
-                            mark_obstacle(self.grid, obs_x, obs_y)
-                            self.last_obstacles.append((obs_x, obs_y))
-
-                    # Replan path around hazard
-                    new_path = astar_grid(current_pos, goal_pos, self.grid)
-                    if not new_path:
+                    time.sleep(0.15)
+                    # Force mapping obstacle directly in front
+                    obs_x = cur_x + (tof_readings[1] * math.cos(cur_theta))
+                    obs_y = cur_y + (tof_readings[1] * math.sin(cur_theta))
+                    mark_obstacle(self.grid, obs_x, obs_y)
+                    # Replan path around it
+                    waypoints = astar_grid(current_pos, goal_pos, self.grid)
+                    if not waypoints:
                         print("[Nav] PATH BLOCKED: No route around obstacle!")
-                        mission_status = "BLOCKED"
                         break
-                    if len(new_path) > 1:
-                        new_path.pop(0)
-                    waypoints = new_path
+                    if len(waypoints) > 1:
+                        waypoints.pop(0)
                     continue
 
-                # 4. Map detected obstacles into occupancy grid with circular inflation
+                # 4. Map detected obstacles into the occupancy grid with circular inflation
                 map_changed = False
                 for i in range(3):
                     d = tof_readings[i]
@@ -198,16 +144,14 @@ class AutonomousNavigator:
                         gx, gy = world_to_grid(obs_x, obs_y)
                         if self.grid[gx][gy] == 0:
                             mark_obstacle(self.grid, obs_x, obs_y)
-                            self.last_obstacles.append((obs_x, obs_y))
                             map_changed = True
 
                 # 5. Dynamic A* Replanning if current route is blocked
                 if map_changed and is_path_blocked(waypoints, self.grid):
-                    print("[Nav] Obstacle detected on route! Replanning A* path...")
+                    print("[Nav] Obstacle detected on route! Replanning A*...")
                     new_path = astar_grid(current_pos, goal_pos, self.grid)
                     if not new_path:
                         print("[Nav] Trapped! No clear route to goal.")
-                        mission_status = "BLOCKED"
                         break
                     if len(new_path) > 1:
                         new_path.pop(0)
@@ -221,13 +165,15 @@ class AutonomousNavigator:
                 if dist_to_wp < 0.20:
                     waypoints.pop(0)
                     if not waypoints:
+                        # If reached last intermediate waypoint, direct toward final goal
                         waypoints = [goal_pos]
                     target_wp = waypoints[0]
 
                 # 7. Local APF Reactive Avoidance & Velocity Calculation
+                # Adjust cruise speed: slow down slightly when nearing the final destination
                 effective_speed = speed_mps
                 if dist_to_goal < 0.50:
-                    effective_speed = max(0.18, speed_mps * (dist_to_goal / 0.50))
+                    effective_speed = max(0.20, speed_mps * (dist_to_goal / 0.50))
 
                 f_total = calculate_apf(current_pos, target_wp, tof_readings, cur_theta, effective_speed)
                 v_left, v_right = calculate_kinematics(f_total, cur_theta, effective_speed)
@@ -239,8 +185,7 @@ class AutonomousNavigator:
                 if now - last_log_time > 0.5:
                     print(
                         f"[Nav] Pos: ({cur_x:5.2f}, {cur_y:5.2f})m | "
-                        f"Target: ({target_x:.1f}, {target_y:.1f})m | "
-                        f"Rem: {dist_to_goal:4.2f}m | "
+                        f"Dist: {total_dist:5.2f}/{distance_m:.1f}m | "
                         f"ToF: L={tof_readings[0]:4.2f} M={tof_readings[1]:4.2f} R={tof_readings[2]:4.2f}m | "
                         f"Cmd: ({v_left:+.2f}, {v_right:+.2f}) m/s"
                     )
@@ -248,61 +193,14 @@ class AutonomousNavigator:
 
                 time.sleep(0.05)  # 20 Hz navigation loop
 
-            if self.stop_requested:
-                mission_status = "STOPPED_BY_USER"
-
         finally:
             self.comm.stop()
 
-        # Final mission recording
-        final_x, final_y, final_theta, final_dist = self.comm.get_pose()
-        self.last_trajectory.append((final_x, final_y))
-        elapsed_total = time.time() - start_time
+        final_dist = self.comm.get_pose()[3]
+        print(f"[Nav] Navigation finished. Final distance travelled: {final_dist:.2f} m.")
+        return True
 
-        print(f"\n[Nav] ========================================================")
-        print(f"[Nav] Mission Finished: {mission_status}")
-        print(f"[Nav] Final Pose: ({final_x:.2f}, {final_y:.2f}) m | Heading: {math.degrees(final_theta):.1f}°")
-        print(f"[Nav] Distance Travelled: {final_dist:.2f} m | Time: {elapsed_total:.1f} s")
-        print(f"[Nav] ========================================================\n")
-
-        # Save trajectory & obstacle map plot
-        if save_plot:
-            self.last_plot_path = save_navigation_plot(
-                trajectory=self.last_trajectory,
-                recorded_obstacles=self.last_obstacles,
-                start_pos=start_pos,
-                goal_pos=goal_pos,
-                planned_path=self.last_planned_path,
-                final_pose=(final_x, final_y, final_theta),
-                total_dist=final_dist,
-                elapsed_s=elapsed_total,
-                status=mission_status,
-                output_path=plot_path,
-                grid=self.grid,
-            )
-
-        return mission_status == "GOAL REACHED"
-
-    def move_distance(
-        self,
-        distance_m: float,
-        speed_mps: float = DEFAULT_SPEED,
-        save_plot: bool = True,
-        plot_path: str = DEFAULT_PLOT_PATH,
-    ) -> bool:
-        """
-        Drives the robot a linear distance forward in meters (backwards-compatible wrapper).
-        Equivalent to navigate_to(target_x=distance_m, target_y=0.0).
-        """
-        return self.navigate_to(
-            target_x=float(distance_m),
-            target_y=0.0,
-            speed_mps=speed_mps,
-            save_plot=save_plot,
-            plot_path=plot_path,
-        )
-
-    def request_stop(self) -> None:
-        """Signals the navigation loop to halt immediately."""
+    def request_stop(self):
+        """Signals the navigation loop to stop immediately."""
         self.stop_requested = True
         self.comm.stop()

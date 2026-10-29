@@ -2,7 +2,7 @@
 autonomous_navigation/planner.py
 ---------------------------------
 Global A* grid path planning and local Artificial Potential Field (APF)
-reactive vector avoidance.
+reactive vector avoidance based on rasberrypi_host/a_search_main.py.
 Implemented with zero external dependencies (pure Python math) for maximum portability.
 """
 
@@ -83,9 +83,9 @@ def astar_grid(start_world, goal_world, grid):
     goal = world_to_grid(*goal_world)
 
     if grid[goal[0]][goal[1]] == 1:
-        # If exact goal cell is marked or on boundary, find nearest free neighbor
+        # If exact goal cell is marked, find nearest free neighbor
         found = False
-        for r in range(1, 15):
+        for r in range(1, 10):
             for dx in range(-r, r + 1):
                 for dy in range(-r, r + 1):
                     cand = (goal[0] + dx, goal[1] + dy)
@@ -166,7 +166,7 @@ def calculate_apf(current_pos, waypoint, tof_readings, current_theta, target_spe
     dist_to_wp = math.hypot(diff_x, diff_y)
 
     if dist_to_wp > 0.001:
-        scale = (target_speed * K_ATT) / max(0.05, dist_to_wp)
+        scale = (target_speed * K_ATT) / dist_to_wp
         f_att_x = diff_x * scale
         f_att_y = diff_y * scale
     else:
@@ -197,7 +197,6 @@ def calculate_kinematics(f_total, current_theta, target_speed):
     """
     Converts resultant navigation force vector into differential-drive
     wheel speeds (v_left, v_right) in meters per second.
-    Includes in-place pivot when heading error is large (> 48 deg).
     """
     norm = math.hypot(f_total[0], f_total[1])
     if norm < 0.01:
@@ -210,23 +209,13 @@ def calculate_kinematics(f_total, current_theta, target_speed):
         math.cos(desired_theta - current_theta)
     )
 
-    # 1. If heading error is large (> 48 deg), pivot in place to face target
-    if abs(heading_error) > 0.85:
-        pivot_speed = max(0.18, min(0.35, 1.8 * abs(heading_error) * WHEEL_BASE_M / 2.0))
-        if heading_error > 0:
-            # Turn Left: Left wheel backward, Right wheel forward
-            return -pivot_speed, +pivot_speed
-        else:
-            # Turn Right: Left wheel forward, Right wheel backward
-            return +pivot_speed, -pivot_speed
-
-    # 2. Smooth forward drive with differential curvature
-    turn_factor = max(0.25, math.cos(heading_error))
+    # Scale linear velocity: slow down if turning sharply
+    turn_factor = max(0.2, math.cos(heading_error))
     linear_v = min(target_speed, norm) * turn_factor
     linear_v = max(MIN_MANEUVER_SPEED, linear_v)
 
     # Angular velocity proportional to heading error
-    omega = 2.0 * heading_error
+    omega = 2.5 * heading_error
 
     # Differential drive kinematics
     v_left = linear_v - (omega * WHEEL_BASE_M / 2.0)
