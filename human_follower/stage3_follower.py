@@ -1,24 +1,28 @@
 """
 human_follower/stage3_follower.py
 ---------------------------------
-Stage 3 Human Follower: Combined Human Following with Real-Time APF Obstacle Avoidance.
+Stage 3 Human Follower: Combined Vision-Only Human Following with Real-Time ToF APF Obstacle Avoidance.
 
 Architecture:
-1. Target Attraction (Vision):
-   Computes attractive force vector F_att towards the detected human, scaled by distance error
-   from the sweet spot (1.0m - 1.4m).
-2. Obstacle Repulsion (3x VL53L0X ToF Lasers):
-   Computes repulsive force vector F_rep pushing away from obstacles detected within
-   obstacle_safe_dist_m (default 0.65m) by the Left (+45 deg), Center (0 deg), and Right (-45 deg) lasers.
-   Distinguishes obstacles from the tracked human so the robot does not repel from the person being followed.
-3. Artificial Potential Field (APF) Vector Blending:
-   F_net = F_att + F_rep
-   Smoothly deflects the robot's heading to steer around chairs, walls, and corners while
-   maintaining continuous visual pursuit of the person.
+1. Target Finding & Distance Estimation (100% VISION ONLY):
+   - The human is detected, tracked, and measured strictly using the camera pipeline.
+   - Bearing angle is calculated from horizontal pixel offset relative to the optical axis.
+   - Distance to human is estimated via calibrated perspective geometry (Vision Proxy).
+   - Distance sensors are NEVER used to estimate or track the human.
+2. Obstacle Detection & Avoidance (3x VL53L0X ToF Distance Sensors):
+   - Left (+45 deg), Center (0 deg), and Right (-45 deg) ToF lasers are dedicated exclusively
+     to detecting surrounding physical obstacles (walls, furniture, trash cans, etc.).
+   - When an obstacle is detected within obstacle_safe_dist_m (default 0.65m), an inverse-square
+     repulsive force F_rep pushes the robot away from the obstacle.
+3. Artificial Potential Field (APF) Blending:
+   - F_net = F_att (Vision Attraction) + F_rep (Sensor Repulsion).
+   - Deflects robot heading dynamically around obstacles while continuously pursuing the human.
 4. Hard Hardware Safety Shield:
-   Emergency halt if any obstacle or human is closer than emergency_stop_dist_m (< 0.35m).
+   - If any sensor detects an obstacle closer than emergency_stop_dist_m (< 0.35m),
+     immediately commands an emergency stop.
 5. Kinematics & Slew-Rate Ramping:
-   Converts F_net to differential wheel speeds (v_left, v_right) with slew-rate acceleration limiting.
+   - Converts F_net to differential wheel speeds (v_left, v_right) with acceleration/deceleration
+     slew-rate limiting and motor stiction startup kick.
 """
 
 import math
@@ -46,11 +50,12 @@ class Stage3Config:
     tx_rate_hz: float = 20.0           # 20 Hz transmission to satisfy ESP32 500ms watchdog
     watchdog_timeout_s: float = 0.45   # Serial command timeout
     
-    # ── Distance Regulation (Sweet Spot & Speeds) ─────────────────────────────
+    # ── Vision Distance Regulation (Sweet Spot & Speeds) ──────────────────────
     target_distance_m: float = 1.20    # Desired distance to maintain from the human (meters)
     distance_deadband_m: float = 0.20  # +/- 20 cm sweet spot (1.0m - 1.4m), v_lin = 0
+    kp_dist: float = 0.55              # Proportional gain for forward velocity
     min_forward_speed: float = 0.15    # Minimum forward speed (m/s) to overcome DC motor gearbox stiction
-    max_forward_speed: float = 0.40    # Maximum cruising forward speed (m/s)
+    max_forward_speed: float = 0.45    # Maximum cruising forward speed (m/s)
     emergency_stop_dist_m: float = 0.35 # Distance threshold below which robot halts immediately
     
     # ── Artificial Potential Field (APF) Parameters ───────────────────────────
@@ -96,17 +101,21 @@ class Stage3Config:
     target_timeout_s: float = 1.0      # Target lost timeout
     confidence_threshold: float = 0.40 # Minimum detection confidence
     
-    # ── Hardware & Camera Settings (Synced with RobotController/Config.h) ─────
-    wheel_base_m: float = 0.134        # 13.4 cm track width
-    wheel_radius_m: float = 0.0215     # 2.15 cm wheel radius
+    # ── Vision Camera Geometry (Calibrated Pinhole Model) ─────────────────────
     camera_index: int = 0
     camera_width: int = 640
     camera_height: int = 480
+    hfov_deg: float = 62.2             # Pi Camera Module V2 horizontal FOV
+    assumed_person_height_m: float = 1.70 # Physical reference height
     model_backend: str = "tflite"
     model_path: str = "vision/models/detect.tflite"
     enable_preview: bool = True
     headless: bool = False
     mock: bool = False
+
+    # ── Physical Dimensions (Synced with RobotController/Config.h) ────────────
+    wheel_base_m: float = 0.134        # 13.4 cm track width
+    wheel_radius_m: float = 0.0215     # 2.15 cm wheel radius
 
     def validate(self) -> None:
         if self.target_distance_m <= self.emergency_stop_dist_m:
@@ -117,7 +126,8 @@ class Stage3Config:
 
 class Stage3ObstacleFollower:
     """
-    Stage 3 Controller: Follows human with APF reactive obstacle evasion and distance regulation.
+    Stage 3 Controller: Follows human using pure vision and steers around obstacles
+    detected by the 3x ToF distance sensors via Artificial Potential Fields (APF).
     """
 
     def __init__(self, config: Optional[Stage3Config] = None) -> None:
@@ -157,6 +167,8 @@ class Stage3ObstacleFollower:
             model_path=self.config.model_path,
             confidence_threshold=self.config.confidence_threshold,
             distance_calibration_enabled=True,
+            assumed_person_height_m=self.config.assumed_person_height_m,
+            hfov_deg=self.config.hfov_deg,
             enable_preview=self.config.enable_preview and not self.config.headless,
             headless=self.config.headless,
         )
@@ -295,51 +307,29 @@ class Stage3ObstacleFollower:
             self._target_v_left = vl
             self._target_v_right = vr
 
-    def _estimate_human_distance(
-        self,
-        obs: TargetObservation,
-        left_dist: float = 9.99,
-        mid_dist: float = 9.99,
-        right_dist: float = 9.99,
-    ) -> Tuple[float, str]:
-        """Multi-sensor distance fusion prioritizing ToF lasers with vision bounding box sanity clamps."""
-        # Priority 1: Direct Center ToF laser measurement
-        if 0.05 < mid_dist < 1.85:
-            return mid_dist, "TOF_LASER"
+    def _estimate_human_distance(self, obs: TargetObservation) -> Tuple[float, str]:
+        """
+        Estimates human distance purely via computer vision (camera and bounding box geometry).
+        Distance sensors are NEVER used for human estimation or tracking.
+        """
+        if not obs.target_valid:
+            return self.config.target_distance_m, "DEFAULT"
 
-        # Priority 2: Directional ToF laser measurement based on tracked lateral error
-        if obs.target_valid:
-            if obs.horizontal_error < -0.10 and 0.05 < left_dist < 1.70:
-                return left_dist, "TOF_LEFT"
-            if obs.horizontal_error > +0.10 and 0.05 < right_dist < 1.70:
-                return right_dist, "TOF_RIGHT"
+        # Priority 1: Calibrated pinhole distance from TargetEstimator
+        if obs.distance is not None and 0.20 < obs.distance < 12.0:
+            return round(obs.distance, 2), "VISION"
 
-            valid_sides = [d for d in (left_dist, right_dist) if 0.05 < d < 1.20]
-            if valid_sides:
-                return min(valid_sides), "TOF_NEAR"
-
-        # Priority 3: Vision Bounding Box Height Proxy with Physical Sanity Clamps
-        if obs.target_valid and obs.bbox is not None and len(obs.bbox) == 4:
+        # Priority 2: Direct geometric computation from bounding box height
+        if obs.bbox is not None and len(obs.bbox) == 4:
             x1, y1, x2, y2 = obs.bbox
             box_h = max(1.0, float(y2 - y1))
-            frame_h = float(self.config.camera_height)
-            h_norm = box_h / frame_h
+            half_fov_rad = math.radians(self.config.hfov_deg / 2.0)
+            fx = (self.config.camera_width / 2.0) / math.tan(half_fov_rad)
+            est_d = (fx * self.config.assumed_person_height_m) / box_h
+            est_d = max(0.30, min(10.0, est_d))
+            return round(est_d, 2), "VISION_BBOX"
 
-            if h_norm >= 0.65 or (y1 <= 12 and y2 >= frame_h - 12):
-                return 0.95, "VISION_CLOSE"
-
-            if h_norm >= 0.45:
-                d_est = max(0.95, min(1.35, 0.65 / h_norm))
-                return round(d_est, 2), "VISION_SWEET"
-
-            d_est = max(1.40, min(3.50, 0.65 / h_norm))
-            return round(d_est, 2), "VISION_FAR"
-
-        # Priority 4: Fallback ToF if available
-        if 0.05 < mid_dist < 2.0:
-            return mid_dist, "TOF_LASER"
-
-        return 1.20, "DEFAULT"
+        return self.config.target_distance_m, "DEFAULT"
 
     def calculate_apf(
         self,
@@ -352,17 +342,20 @@ class Stage3ObstacleFollower:
         """
         Calculates Artificial Potential Field vectors in Robot Frame:
         +X = Forward, +Y = Left, -Y = Right.
-        
+
+        Human Target Attraction (F_att): Derived 100% from Vision.
+        Obstacle Repulsion (F_rep): Derived 100% from 3x VL53L0X Distance Sensors.
+
         Returns:
             f_att: (att_x, att_y) attractive vector towards human
             f_rep: (rep_x, rep_y) repulsive vector away from obstacles
             f_net: (net_x, net_y) resultant navigation vector
         """
-        # ── 1. Attractive Force towards Human ─────────────────────────────────
-        sweet_spot_max = self.config.target_distance_m + self.config.distance_deadband_m  # 1.40m
+        # ── 1. Target Attraction towards Human (VISION ONLY) ──────────────────
+        sweet_spot_max = self.config.target_distance_m + self.config.distance_deadband_m
         
         # Bearing angle of human in robot frame:
-        # Note: obs.bearing_deg is positive to the right (clockwise).
+        # obs.bearing_deg is positive to the right (clockwise).
         # In Cartesian robot frame (+X forward, +Y left), bearing angle theta = -bearing_rad.
         human_theta = -math.radians(obs.bearing_deg)
 
@@ -376,21 +369,15 @@ class Stage3ObstacleFollower:
             f_att_x = 0.0
             f_att_y = 0.0
 
-        # ── 2. Repulsive Force from Obstacles ─────────────────────────────────
+        # ── 2. Obstacle Repulsion (SENSORS ONLY) ──────────────────────────────
         f_rep_x = 0.0
         f_rep_y = 0.0
         sensor_readings = [left_dist, mid_dist, right_dist]
         sensor_angles = self.config.sensor_angles_rad  # (+45 deg, 0 deg, -45 deg)
 
-        for i, (dist, angle) in enumerate(zip(sensor_readings, sensor_angles)):
-            if 0.02 < dist < self.config.obstacle_safe_dist_m:
-                # Disambiguate obstacle vs human:
-                # If middle sensor (i==1) sees target at approx dist_m and target is centered,
-                # do not repel from the human we are trying to follow!
-                if i == 1 and abs(obs.horizontal_error) < 0.20 and abs(dist - dist_m) < 0.20:
-                    continue
-
-                # Repulsion magnitude inversely proportional to distance
+        for dist, angle in zip(sensor_readings, sensor_angles):
+            if 0.03 < dist < self.config.obstacle_safe_dist_m:
+                # Repulsion magnitude inversely proportional to distance (APF law)
                 rep_mag = self.config.k_rep * (
                     (1.0 / dist) - (1.0 / self.config.obstacle_safe_dist_m)
                 ) * (1.0 / (dist ** 2))
@@ -410,15 +397,15 @@ class Stage3ObstacleFollower:
     def step(
         self,
         obs: Optional[TargetObservation] = None,
-        mock_mid_tof: Optional[float] = None,
         mock_tofs: Optional[Tuple[float, float, float]] = None,
     ) -> Tuple[float, float, str]:
         """
         Execute one control cycle:
-        1. Hard hardware safety shield check across all 3 ToF lasers (< 0.35m -> immediate stop).
-        2. Distance and target estimation with multi-sensor fusion.
-        3. APF vector calculation (F_att + F_rep -> F_net).
-        4. Kinematics generation for smooth curve avoidance while pursuing human.
+        1. Target validation & Smart Recovery (Vision).
+        2. Hard hardware safety shield check across all 3 ToF lasers (< 0.35m -> immediate stop).
+        3. Human distance estimation strictly via VISION ONLY.
+        4. APF vector calculation (F_att from vision + F_rep from distance sensors).
+        5. Kinematics generation for smooth curve avoidance while pursuing human.
         """
         if obs is None:
             obs = self.vision.get_latest_observation()
@@ -461,11 +448,9 @@ class Stage3ObstacleFollower:
             self._last_seen_direction = "RIGHT" if obs.horizontal_error > 0 else "LEFT"
         self._last_seen_time = now
 
-        # Get ToF distance readings [left, middle, right]
+        # Get ToF distance readings [left, middle, right] (for obstacles only)
         if mock_tofs is not None:
             left_d, mid_d, right_d = mock_tofs
-        elif mock_mid_tof is not None:
-            left_d, mid_d, right_d = 9.99, mock_mid_tof, 9.99
         else:
             left_d, mid_d, right_d = self.sensors.get_distances()
 
@@ -478,24 +463,17 @@ class Stage3ObstacleFollower:
             self.state = "SAFETY_STOP"
             return 0.0, 0.0, self.state
 
-        # Estimate human distance
-        dist_m, dist_source = self._estimate_human_distance(
-            obs, left_dist=left_d, mid_dist=mid_d, right_dist=right_d
-        )
+        # ── 2. ESTIMATE HUMAN DISTANCE (VISION ONLY) ──────────────────────────
+        dist_m, dist_source = self._estimate_human_distance(obs)
 
-        if dist_m < self.config.emergency_stop_dist_m:
-            self._set_wheel_velocities(0.0, 0.0, immediate_stop=True)
-            self.state = "SAFETY_STOP"
-            return 0.0, 0.0, self.state
-
-        # ── 2. Calculate APF Vectors ──────────────────────────────────────────
+        # ── 3. Calculate APF Vectors ──────────────────────────────────────────
         f_att, f_rep, f_net = self.calculate_apf(obs, dist_m, left_d, mid_d, right_d)
         f_net_x, f_net_y = f_net
         f_rep_x, f_rep_y = f_rep
         rep_mag = math.hypot(f_rep_x, f_rep_y)
         net_mag = math.hypot(f_net_x, f_net_y)
 
-        # ── 3. Frame-Synchronized Heading Rate Calculation ────────────────────
+        # ── 4. Frame-Synchronized Heading Rate Calculation ────────────────────
         h_err = obs.horizontal_error
         if obs.timestamp > self._last_obs_timestamp:
             dt = max(0.02, obs.timestamp - self._last_obs_timestamp)
@@ -505,7 +483,7 @@ class Stage3ObstacleFollower:
             self._last_obs_timestamp = obs.timestamp
         d_err = self._smoothed_d_err
 
-        # ── 4. Kinematics from APF Vectors ────────────────────────────────────
+        # ── 5. Kinematics from APF Vectors ────────────────────────────────────
         sweet_spot_max = self.config.target_distance_m + self.config.distance_deadband_m
 
         # Check if the robot needs to move forward
@@ -591,7 +569,7 @@ class Stage3ObstacleFollower:
                 v_turn = turn_speed if h_err > 0 else -turn_speed
                 self.state = "PIVOT_RIGHT" if v_turn > 0 else "PIVOT_LEFT"
 
-        # ── 5. Kinematics Fusion ──────────────────────────────────────────────
+        # ── 6. Kinematics Fusion ──────────────────────────────────────────────
         vl = v_linear + v_turn
         vr = v_linear - v_turn
 
@@ -614,9 +592,7 @@ class Stage3ObstacleFollower:
             obs = self._last_observation
             v_telem = self.vision.get_telemetry()
             left_d, mid_d, right_d = self.sensors.get_distances()
-            dist_m, source = self._estimate_human_distance(
-                obs, left_dist=left_d, mid_dist=mid_d, right_dist=right_d
-            )
+            dist_m, source = self._estimate_human_distance(obs)
             f_att, f_rep, f_net = self.calculate_apf(obs, dist_m, left_d, mid_d, right_d)
 
             self._telemetry = {
@@ -668,4 +644,3 @@ class Stage3ObstacleFollower:
         self.sensors.running = False
         self.vision.stop()
         self.state = "STOPPED"
-
