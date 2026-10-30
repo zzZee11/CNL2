@@ -88,8 +88,8 @@ OBSTACLE_MAP_MAX_DIST_M = 1.20 # Ignore distant noise (>1.2m) when updating the 
 # TIME-OF-FLIGHT (VL53L0X) HARDWARE PINS (Pi BCM)
 # ==========================================
 XSHUT_LEFT = 17               # GPIO 17 (Pin 11)
-XSHUT_MIDDLE = 27             # GPIO 27 (Pin 13)
-XSHUT_RIGHT = 22              # GPIO 22 (Pin 15)
+XSHUT_MIDDLE = 22             # GPIO 27 (Pin 13)
+XSHUT_RIGHT = 27              # GPIO 22 (Pin 15)
 
 ADDR_LEFT = 0x30              # Readdressed I2C address
 ADDR_MIDDLE = 0x31            # Readdressed I2C address
