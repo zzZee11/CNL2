@@ -31,7 +31,7 @@ STARTUP_PUSH_SPEED = 0.45     # Gentle breakaway kick demand (m/s)
 STARTUP_PUSH_DURATION_S = 0.15 # 150 ms startup kick (forward only)
 DEFAULT_SPEED = 0.40          # Default cruising speed (m/s)
 MAX_ALLOWED_SPEED = 1.0       # Safety clamp
-MIN_MANEUVER_SPEED = 0.12     # Minimum turning/creeping speed
+MIN_MANEUVER_SPEED = 0.08     # Minimum turning/creeping speed
 
 # Acceleration & Deceleration Slew-Rate Limits (Smooth Motion)
 MAX_ACCEL_MPS2 = 0.80         # Maximum linear acceleration (m/s^2)
