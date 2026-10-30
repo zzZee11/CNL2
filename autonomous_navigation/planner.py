@@ -16,6 +16,7 @@ try:
         ROBOT_CLEARANCE_RADIUS, CELLS_TO_INFLATE,
         K_ATT, K_REP, MAX_REP_FORCE, SAFE_DIST, SENSOR_ANGLES,
         PIVOT_ENTER_RAD, PIVOT_EXIT_RAD,
+        KP_HEADING_NAV, KD_HEADING_NAV, HEADING_DEADBAND_RAD,
         WHEEL_BASE_M, MAX_ALLOWED_SPEED, MIN_MANEUVER_SPEED
     )
 except ImportError:
@@ -25,6 +26,7 @@ except ImportError:
         ROBOT_CLEARANCE_RADIUS, CELLS_TO_INFLATE,
         K_ATT, K_REP, MAX_REP_FORCE, SAFE_DIST, SENSOR_ANGLES,
         PIVOT_ENTER_RAD, PIVOT_EXIT_RAD,
+        KP_HEADING_NAV, KD_HEADING_NAV, HEADING_DEADBAND_RAD,
         WHEEL_BASE_M, MAX_ALLOWED_SPEED, MIN_MANEUVER_SPEED
     )
 
@@ -198,13 +200,14 @@ def calculate_apf(current_pos, waypoint, tof_readings, current_theta, target_spe
     return (total_fx, total_fy)
 
 
-def calculate_kinematics(f_total, current_theta, target_speed, is_pivoting=False):
+def calculate_kinematics(f_total, current_theta, target_speed, is_pivoting=False, d_heading_error=0.0):
     """
     Converts resultant navigation force vector into differential-drive
     wheel speeds (v_left, v_right) in meters per second.
-    Includes in-place pivot with hysteresis:
+    Includes in-place pivot with hysteresis and active PD heading damping:
       - Enter pivot when |heading_error| > PIVOT_ENTER_RAD (~49°)
       - Exit pivot only when |heading_error| < PIVOT_EXIT_RAD (~20°)
+      - PD course correction with derivative damping when driving forward
     """
     norm = math.hypot(f_total[0], f_total[1])
     if norm < 0.01:
@@ -232,13 +235,17 @@ def calculate_kinematics(f_total, current_theta, target_speed, is_pivoting=False
             # Turn Right: Left wheel forward, Right wheel backward
             return +pivot_speed, -pivot_speed
 
-    # 2. Smooth forward drive with differential curvature
+    # 2. Smooth forward drive with active PD course correction
     turn_factor = max(0.25, math.cos(heading_error))
     linear_v = min(target_speed, norm) * turn_factor
     linear_v = max(MIN_MANEUVER_SPEED, linear_v)
 
-    # Angular velocity proportional to heading error
-    omega = 2.0 * heading_error
+    # Deadband around center to eliminate tiny encoder quantization flutter
+    if abs(heading_error) < HEADING_DEADBAND_RAD:
+        omega = 0.0
+    else:
+        # PD heading steering: proportional gain + derivative rate damping
+        omega = (KP_HEADING_NAV * heading_error) + (KD_HEADING_NAV * d_heading_error)
 
     # Differential drive kinematics
     v_left = linear_v - (omega * WHEEL_BASE_M / 2.0)

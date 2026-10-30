@@ -21,6 +21,7 @@ try:
         DEFAULT_SPEED, SENSOR_ANGLES,
         CRITICAL_STOP_DIST, TOF_MAX_RANGE_M,
         OBSTACLE_PERSISTENCE_COUNT, OBSTACLE_MAP_MAX_DIST_M,
+        GOAL_TOLERANCE_M, LOOKAHEAD_DIST_M,
         DEFAULT_PLOT_PATH
     )
     from .planner import (
@@ -35,6 +36,7 @@ except ImportError:
         DEFAULT_SPEED, SENSOR_ANGLES,
         CRITICAL_STOP_DIST, TOF_MAX_RANGE_M,
         OBSTACLE_PERSISTENCE_COUNT, OBSTACLE_MAP_MAX_DIST_M,
+        GOAL_TOLERANCE_M, LOOKAHEAD_DIST_M,
         DEFAULT_PLOT_PATH
     )
     from planner import (
@@ -57,6 +59,10 @@ class AutonomousNavigator:
         self.sensor_hit_counts = [0, 0, 0]
         self.last_sensor_dists = [9.99, 9.99, 9.99]
         self.is_pivoting = False
+
+        # Heading error tracking for PD course-correction rate damping
+        self.last_heading_err = 0.0
+        self.last_kinematics_time = 0.0
 
         # Mission logging & trajectory history
         self.last_trajectory: List[Tuple[float, float]] = []
@@ -112,6 +118,8 @@ class AutonomousNavigator:
         self.sensor_hit_counts = [0, 0, 0]
         self.last_sensor_dists = [9.99, 9.99, 9.99]
         self.is_pivoting = False
+        self.last_heading_err = 0.0
+        self.last_kinematics_time = time.time()
 
         # Telemetry history tracking
         self.last_trajectory = [(0.0, 0.0)]
@@ -162,8 +170,8 @@ class AutonomousNavigator:
 
                 # Distance remaining to ultimate goal
                 dist_to_goal = math.hypot(target_x - cur_x, target_y - cur_y)
-                if dist_to_goal < 0.15:
-                    print(f"\n[Nav] GOAL REACHED! Distance to target: {dist_to_goal:.2f} m (< 0.15m tolerance).")
+                if dist_to_goal < GOAL_TOLERANCE_M:
+                    print(f"\n[Nav] GOAL REACHED! Distance to target: {dist_to_goal:.2f} m (< {GOAL_TOLERANCE_M:.2f}m tolerance).")
                     mission_status = "GOAL REACHED"
                     break
 
@@ -237,34 +245,58 @@ class AutonomousNavigator:
                     print(f"[Nav] New path computed with {len(waypoints)} waypoints.")
                     continue
 
-                # 6. Waypoint Tracking
-                target_wp = waypoints[0]
-                dist_to_wp = math.hypot(target_wp[0] - cur_x, target_wp[1] - cur_y)
-                if dist_to_wp < 0.20:
-                    waypoints.pop(0)
-                    if not waypoints:
-                        waypoints = [goal_pos]
-                    target_wp = waypoints[0]
+                # 6. Waypoint Tracking with Pure Pursuit Lookahead
+                while len(waypoints) > 1:
+                    wp_dist = math.hypot(waypoints[0][0] - cur_x, waypoints[0][1] - cur_y)
+                    if wp_dist < 0.22:
+                        waypoints.pop(0)
+                    else:
+                        break
+
+                # Select lookahead target waypoint along path (approx 35 cm ahead) for smooth tracking
+                target_wp = waypoints[-1]
+                for wp in waypoints:
+                    if math.hypot(wp[0] - cur_x, wp[1] - cur_y) >= LOOKAHEAD_DIST_M:
+                        target_wp = wp
+                        break
 
                 # 7. Local APF Reactive Avoidance & Velocity Calculation
                 effective_speed = speed_mps
-                if dist_to_goal < 0.50:
-                    effective_speed = max(0.18, speed_mps * (dist_to_goal / 0.50))
+                if dist_to_goal < 0.40:
+                    # Smooth deceleration ramp for the final 40 cm to stop precisely at goal
+                    effective_speed = max(0.10, speed_mps * (dist_to_goal / 0.40))
 
                 f_total = calculate_apf(current_pos, target_wp, tof_readings, cur_theta, effective_speed)
-                v_left, v_right = calculate_kinematics(f_total, cur_theta, effective_speed, is_pivoting=self.is_pivoting)
+
+                # Derivative rate of heading error for PD damping (Course Correction)
+                desired_theta = math.atan2(f_total[1], f_total[0])
+                current_heading_err = math.atan2(
+                    math.sin(desired_theta - cur_theta),
+                    math.cos(desired_theta - cur_theta)
+                )
+                dt_kin = max(0.005, now - self.last_kinematics_time)
+                d_heading_err = (current_heading_err - self.last_heading_err) / dt_kin
+                self.last_heading_err = current_heading_err
+                self.last_kinematics_time = now
+
+                v_left, v_right = calculate_kinematics(
+                    f_total, cur_theta, effective_speed,
+                    is_pivoting=self.is_pivoting,
+                    d_heading_error=d_heading_err
+                )
                 self.is_pivoting = (v_left * v_right < -0.001)
 
                 # Send commands to ESP32
                 self.comm.set_speeds(v_left, v_right)
 
-                # Status log at 2 Hz
-                if now - last_log_time > 0.5:
+                # Status log at 3 Hz with live heading error
+                if now - last_log_time > 0.3:
+                    heading_deg = math.degrees(cur_theta)
+                    heading_err_deg = math.degrees(current_heading_err)
                     print(
                         f"[Nav] Pos: ({cur_x:5.2f}, {cur_y:5.2f})m | "
-                        f"Target: ({target_x:.1f}, {target_y:.1f})m | "
                         f"Rem: {dist_to_goal:4.2f}m | "
-                        f"ToF: L={tof_readings[0]:4.2f} M={tof_readings[1]:4.2f} R={tof_readings[2]:4.2f}m | "
+                        f"Heading: {heading_deg:+5.1f}° (Err: {heading_err_deg:+5.1f}°) | "
                         f"Cmd: ({v_left:+.2f}, {v_right:+.2f}) m/s"
                     )
                     last_log_time = now

@@ -58,9 +58,9 @@ DEFAULT_PLOT_PATH = "autonomous_navigation/navigation_result.png"
 # ==========================================
 K_ATT = 1.4                   # Attractive force towards current waypoint
 K_REP = 0.35                  # Repulsive force away from ToF obstacles (tuned to prevent spikes)
-MAX_REP_FORCE = 2.0           # Saturation clamp on repulsive force to prevent erratic twitches
-SAFE_DIST = 0.55              # Distance (meters) at which obstacles begin repelling robot
-CRITICAL_STOP_DIST = 0.18     # Emergency stop distance (meters)
+MAX_REP_FORCE = 1.0           # Saturation clamp on repulsive force to prevent erratic twitches
+SAFE_DIST = 0.15              # Distance (meters) at which obstacles begin repelling robot
+CRITICAL_STOP_DIST = 0.08     # Emergency stop distance (meters)
 SENSOR_ANGLES = [
     math.pi / 4.0,            # Left sensor (+45 deg)
     0.0,                      # Middle sensor (0 deg straight forward)
@@ -70,6 +70,15 @@ SENSOR_ANGLES = [
 # In-Place Pivot Heading Thresholds (with Hysteresis)
 PIVOT_ENTER_RAD = 0.85        # ~49 deg: enter in-place pivot if heading error exceeds this
 PIVOT_EXIT_RAD = 0.35         # ~20 deg: exit in-place pivot only when aligned within this
+
+# Heading Lock & Course Correction (PD Control)
+KP_HEADING_NAV = 2.2          # Proportional angular steering gain
+KD_HEADING_NAV = 0.14         # Derivative rate damping gain to prevent heading overshoots
+HEADING_DEADBAND_RAD = 0.035  # ~2.0 deg deadband: drive straight when aligned
+
+# Goal Arrival Precision & Pure Pursuit Lookahead
+GOAL_TOLERANCE_M = 0.08       # Target arrival distance tolerance in meters
+LOOKAHEAD_DIST_M = 0.35       # Pure pursuit lookahead distance (meters) along waypoint path
 
 # Obstacle Mapping Persistence & Distance Filter
 OBSTACLE_PERSISTENCE_COUNT = 2 # Must see obstacle in >= 2 consecutive cycles to map it
