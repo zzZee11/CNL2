@@ -17,14 +17,14 @@ try:
         SERIAL_PORT, SERIAL_BAUD, TX_RATE_HZ,
         WHEEL_RADIUS_M, WHEEL_BASE_M, TICKS_PER_REV,
         STARTUP_PUSH_SPEED, STARTUP_PUSH_DURATION_S,
-        MAX_ALLOWED_SPEED
+        MAX_ALLOWED_SPEED, MAX_ACCEL_MPS2, MAX_DECEL_MPS2
     )
 except ImportError:
     from config import (
         SERIAL_PORT, SERIAL_BAUD, TX_RATE_HZ,
         WHEEL_RADIUS_M, WHEEL_BASE_M, TICKS_PER_REV,
         STARTUP_PUSH_SPEED, STARTUP_PUSH_DURATION_S,
-        MAX_ALLOWED_SPEED
+        MAX_ALLOWED_SPEED, MAX_ACCEL_MPS2, MAX_DECEL_MPS2
     )
 
 class RobotSerialComm:
@@ -94,16 +94,17 @@ class RobotSerialComm:
         self.rx_thread.start()
 
     def set_speeds(self, left, right):
-        """Sets target wheel speeds in m/s with automatic breakaway kick if starting from rest."""
+        """Sets target wheel speeds in m/s with automatic breakaway kick if starting forward from rest."""
         left = max(-MAX_ALLOWED_SPEED, min(MAX_ALLOWED_SPEED, float(left)))
         right = max(-MAX_ALLOWED_SPEED, min(MAX_ALLOWED_SPEED, float(right)))
 
         with self.cmd_lock:
-            was_stopped = (abs(self.cmd_left) < 0.01 and abs(self.cmd_right) < 0.01)
-            is_moving = (abs(left) > 0.01 or abs(right) > 0.01)
+            was_stopped = (abs(self.cmd_left) < 0.02 and abs(self.cmd_right) < 0.02)
+            is_forward_drive = (left > 0.05 and right > 0.05)
 
-            # Trigger 180 ms startup kick to break static friction
-            if was_stopped and is_moving:
+            # Trigger gentle startup kick ONLY when transitioning from stopped to forward driving
+            # (Do NOT kick during in-place pivoting to prevent violent spin jumps)
+            if was_stopped and is_forward_drive:
                 self.push_until = time.time() + STARTUP_PUSH_DURATION_S
 
             self.cmd_left = left
@@ -161,22 +162,49 @@ class RobotSerialComm:
             self.total_distance += abs(delta_s)
 
     def _tx_loop(self):
-        """Transmits 20 Hz velocity packets to feed the ESP32 safety watchdog."""
+        """Transmits 20 Hz velocity packets with slew-rate acceleration ramping to feed the ESP32 safety watchdog."""
         interval = 1.0 / TX_RATE_HZ
+        max_delta_accel = MAX_ACCEL_MPS2 * interval
+        max_delta_decel = MAX_DECEL_MPS2 * interval
+
+        current_cmd_l = 0.0
+        current_cmd_r = 0.0
+
         while self.running:
             t0 = time.time()
             with self.cmd_lock:
                 l = self.cmd_left
                 r = self.cmd_right
                 pushing = time.time() < self.push_until
+                is_immediate_stop = (l == 0.0 and r == 0.0 and not pushing)
 
-            # Apply startup breakaway kick if active
-            if pushing:
-                out_l = (STARTUP_PUSH_SPEED if l > 0 else -STARTUP_PUSH_SPEED) if abs(l) > 0.01 else 0.0
-                out_r = (STARTUP_PUSH_SPEED if r > 0 else -STARTUP_PUSH_SPEED) if abs(r) > 0.01 else 0.0
+            if is_immediate_stop:
+                current_cmd_l = 0.0
+                current_cmd_r = 0.0
             else:
-                out_l = l
-                out_r = r
+                if pushing:
+                    target_l = STARTUP_PUSH_SPEED if l > 0.05 else l
+                    target_r = STARTUP_PUSH_SPEED if r > 0.05 else r
+                else:
+                    target_l = l
+                    target_r = r
+
+                # Left wheel acceleration / deceleration slew-rate
+                diff_l = target_l - current_cmd_l
+                if diff_l > 0:
+                    current_cmd_l += min(diff_l, max_delta_accel)
+                else:
+                    current_cmd_l -= min(-diff_l, max_delta_decel)
+
+                # Right wheel acceleration / deceleration slew-rate
+                diff_r = target_r - current_cmd_r
+                if diff_r > 0:
+                    current_cmd_r += min(diff_r, max_delta_accel)
+                else:
+                    current_cmd_r -= min(-diff_r, max_delta_decel)
+
+            out_l = current_cmd_l
+            out_r = current_cmd_r
 
             if not self.use_mock and self.ser and self.ser.is_open:
                 try:

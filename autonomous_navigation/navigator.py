@@ -20,6 +20,7 @@ try:
     from .config import (
         DEFAULT_SPEED, SENSOR_ANGLES,
         CRITICAL_STOP_DIST, TOF_MAX_RANGE_M,
+        OBSTACLE_PERSISTENCE_COUNT, OBSTACLE_MAP_MAX_DIST_M,
         DEFAULT_PLOT_PATH
     )
     from .planner import (
@@ -33,6 +34,7 @@ except ImportError:
     from config import (
         DEFAULT_SPEED, SENSOR_ANGLES,
         CRITICAL_STOP_DIST, TOF_MAX_RANGE_M,
+        OBSTACLE_PERSISTENCE_COUNT, OBSTACLE_MAP_MAX_DIST_M,
         DEFAULT_PLOT_PATH
     )
     from planner import (
@@ -50,6 +52,11 @@ class AutonomousNavigator:
         self.sensors = sensor_mgr
         self.grid = create_empty_grid()
         self.stop_requested = False
+
+        # Obstacle persistence tracking to filter noise & floor glare
+        self.sensor_hit_counts = [0, 0, 0]
+        self.last_sensor_dists = [9.99, 9.99, 9.99]
+        self.is_pivoting = False
 
         # Mission logging & trajectory history
         self.last_trajectory: List[Tuple[float, float]] = []
@@ -102,6 +109,9 @@ class AutonomousNavigator:
         # Reset starting pose to (0, 0) facing theta = 0 (along the +X axis)
         self.comm.reset_odometry(start_x=0.0, start_y=0.0, start_theta=0.0)
         self.grid = create_empty_grid()
+        self.sensor_hit_counts = [0, 0, 0]
+        self.last_sensor_dists = [9.99, 9.99, 9.99]
+        self.is_pivoting = False
 
         # Telemetry history tracking
         self.last_trajectory = [(0.0, 0.0)]
@@ -186,20 +196,32 @@ class AutonomousNavigator:
                     waypoints = new_path
                     continue
 
-                # 4. Map detected obstacles into occupancy grid with circular inflation
+                # 4. Filter and map persistent obstacles into occupancy grid with circular inflation
                 map_changed = False
                 for i in range(3):
                     d = tof_readings[i]
-                    if 0.05 < d < TOF_MAX_RANGE_M:
-                        sensor_angle = cur_theta + SENSOR_ANGLES[i]
-                        obs_x = cur_x + (d * math.cos(sensor_angle))
-                        obs_y = cur_y + (d * math.sin(sensor_angle))
+                    # Filter out floor reflections (<0.06m) and distant noise (>OBSTACLE_MAP_MAX_DIST_M)
+                    if 0.06 < d < OBSTACLE_MAP_MAX_DIST_M:
+                        if abs(d - self.last_sensor_dists[i]) < 0.25:
+                            self.sensor_hit_counts[i] += 1
+                        else:
+                            self.sensor_hit_counts[i] = 1
+                        self.last_sensor_dists[i] = d
 
-                        gx, gy = world_to_grid(obs_x, obs_y)
-                        if self.grid[gx][gy] == 0:
-                            mark_obstacle(self.grid, obs_x, obs_y)
-                            self.last_obstacles.append((obs_x, obs_y))
-                            map_changed = True
+                        # Only map obstacle into A* grid if detected persistently (>= 2 cycles)
+                        if self.sensor_hit_counts[i] >= OBSTACLE_PERSISTENCE_COUNT:
+                            sensor_angle = cur_theta + SENSOR_ANGLES[i]
+                            obs_x = cur_x + (d * math.cos(sensor_angle))
+                            obs_y = cur_y + (d * math.sin(sensor_angle))
+
+                            gx, gy = world_to_grid(obs_x, obs_y)
+                            if self.grid[gx][gy] == 0:
+                                mark_obstacle(self.grid, obs_x, obs_y)
+                                self.last_obstacles.append((obs_x, obs_y))
+                                map_changed = True
+                    else:
+                        self.sensor_hit_counts[i] = 0
+                        self.last_sensor_dists[i] = d
 
                 # 5. Dynamic A* Replanning if current route is blocked
                 if map_changed and is_path_blocked(waypoints, self.grid):
@@ -230,7 +252,8 @@ class AutonomousNavigator:
                     effective_speed = max(0.18, speed_mps * (dist_to_goal / 0.50))
 
                 f_total = calculate_apf(current_pos, target_wp, tof_readings, cur_theta, effective_speed)
-                v_left, v_right = calculate_kinematics(f_total, cur_theta, effective_speed)
+                v_left, v_right = calculate_kinematics(f_total, cur_theta, effective_speed, is_pivoting=self.is_pivoting)
+                self.is_pivoting = (v_left * v_right < -0.001)
 
                 # Send commands to ESP32
                 self.comm.set_speeds(v_left, v_right)

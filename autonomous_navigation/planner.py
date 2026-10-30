@@ -14,7 +14,8 @@ try:
         GRID_SIZE_X, GRID_SIZE_Y, GRID_RES,
         ORIGIN_OFFSET_X, ORIGIN_OFFSET_Y,
         ROBOT_CLEARANCE_RADIUS, CELLS_TO_INFLATE,
-        K_ATT, K_REP, SAFE_DIST, SENSOR_ANGLES,
+        K_ATT, K_REP, MAX_REP_FORCE, SAFE_DIST, SENSOR_ANGLES,
+        PIVOT_ENTER_RAD, PIVOT_EXIT_RAD,
         WHEEL_BASE_M, MAX_ALLOWED_SPEED, MIN_MANEUVER_SPEED
     )
 except ImportError:
@@ -22,7 +23,8 @@ except ImportError:
         GRID_SIZE_X, GRID_SIZE_Y, GRID_RES,
         ORIGIN_OFFSET_X, ORIGIN_OFFSET_Y,
         ROBOT_CLEARANCE_RADIUS, CELLS_TO_INFLATE,
-        K_ATT, K_REP, SAFE_DIST, SENSOR_ANGLES,
+        K_ATT, K_REP, MAX_REP_FORCE, SAFE_DIST, SENSOR_ANGLES,
+        PIVOT_ENTER_RAD, PIVOT_EXIT_RAD,
         WHEEL_BASE_M, MAX_ALLOWED_SPEED, MIN_MANEUVER_SPEED
     )
 
@@ -180,9 +182,12 @@ def calculate_apf(current_pos, waypoint, tof_readings, current_theta, target_spe
     num_sensors = min(len(tof_readings), len(SENSOR_ANGLES))
     for i in range(num_sensors):
         distance = tof_readings[i]
-        if 0.02 < distance < SAFE_DIST:
-            # Inverse-square repulsion magnitude
-            rep_mag = K_REP * ((1.0 / distance) - (1.0 / SAFE_DIST)) / (distance ** 2)
+        # Ignore floor glare / extreme close (< 0.05m) and out-of-range (> SAFE_DIST)
+        if 0.05 < distance < SAFE_DIST:
+            # Inverse-square repulsion magnitude with saturation cap to prevent spikes
+            raw_rep = K_REP * ((1.0 / distance) - (1.0 / SAFE_DIST)) / (distance ** 2)
+            rep_mag = min(MAX_REP_FORCE, raw_rep)
+
             # Push away from the obstacle angle
             push_angle = current_theta + SENSOR_ANGLES[i] + math.pi
             f_rep_x += rep_mag * math.cos(push_angle)
@@ -193,11 +198,13 @@ def calculate_apf(current_pos, waypoint, tof_readings, current_theta, target_spe
     return (total_fx, total_fy)
 
 
-def calculate_kinematics(f_total, current_theta, target_speed):
+def calculate_kinematics(f_total, current_theta, target_speed, is_pivoting=False):
     """
     Converts resultant navigation force vector into differential-drive
     wheel speeds (v_left, v_right) in meters per second.
-    Includes in-place pivot when heading error is large (> 48 deg).
+    Includes in-place pivot with hysteresis:
+      - Enter pivot when |heading_error| > PIVOT_ENTER_RAD (~49°)
+      - Exit pivot only when |heading_error| < PIVOT_EXIT_RAD (~20°)
     """
     norm = math.hypot(f_total[0], f_total[1])
     if norm < 0.01:
@@ -210,9 +217,14 @@ def calculate_kinematics(f_total, current_theta, target_speed):
         math.cos(desired_theta - current_theta)
     )
 
-    # 1. If heading error is large (> 48 deg), pivot in place to face target
-    if abs(heading_error) > 0.85:
-        pivot_speed = max(0.18, min(0.35, 1.8 * abs(heading_error) * WHEEL_BASE_M / 2.0))
+    # 1. Hysteresis pivot check: prevents hunting oscillation at boundary
+    should_pivot = (abs(heading_error) > PIVOT_ENTER_RAD) or (is_pivoting and abs(heading_error) > PIVOT_EXIT_RAD)
+
+    if should_pivot:
+        # Smooth pivot speed easing: slows down gently as robot aligns to exit angle
+        err_mag = abs(heading_error)
+        norm_err = min(1.0, max(0.0, (err_mag - PIVOT_EXIT_RAD) / max(0.01, PIVOT_ENTER_RAD - PIVOT_EXIT_RAD)))
+        pivot_speed = MIN_MANEUVER_SPEED + (0.26 - MIN_MANEUVER_SPEED) * (norm_err ** 1.2)
         if heading_error > 0:
             # Turn Left: Left wheel backward, Right wheel forward
             return -pivot_speed, +pivot_speed

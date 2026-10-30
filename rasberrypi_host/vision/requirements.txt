@@ -1,8 +1,0 @@
-# Lightweight Vision Requirements for Raspberry Pi 4B (Total size < 60 MB)
-#
-# Recommended setup on Raspberry Pi OS (uses pre-compiled hardware-accelerated apt packages):
-#   sudo apt update && sudo apt install -y python3-opencv python3-numpy python3-pip
-#   pip3 install -r requirements.txt --no-cache-dir
-#
-tflite-runtime>=2.14.0
-numpy>=1.21.0

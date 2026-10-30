@@ -1,8 +1,0 @@
-# Heavy Vision Requirements for PC / Workstation / Desktop GPU (PyTorch + YOLO)
-# Note: DO NOT install on a 16GB Raspberry Pi as PyTorch requires 3GB+ disk space.
-ultralytics>=8.4.0
-torch
-torchvision
-opencv-python
-numpy
-

@@ -27,11 +27,15 @@ TICKS_PER_REV = 720.0         # Measured encoder counts per single wheel turn (C
 # STARTUP PUSH & DEFAULT SPEEDS
 # ==========================================
 # Breakaway torque boost to overcome L298N & gearbox static friction
-STARTUP_PUSH_SPEED = 0.85     # Max power speed demand (m/s) -> saturates ESP32 PID output to 255 PWM
-STARTUP_PUSH_DURATION_S = 0.18 # 180 ms startup kick
-DEFAULT_SPEED = 0.60          # Default cruising speed (m/s)
+STARTUP_PUSH_SPEED = 0.45     # Gentle breakaway kick demand (m/s)
+STARTUP_PUSH_DURATION_S = 0.15 # 150 ms startup kick (forward only)
+DEFAULT_SPEED = 0.40          # Default cruising speed (m/s)
 MAX_ALLOWED_SPEED = 1.0       # Safety clamp
 MIN_MANEUVER_SPEED = 0.12     # Minimum turning/creeping speed
+
+# Acceleration & Deceleration Slew-Rate Limits (Smooth Motion)
+MAX_ACCEL_MPS2 = 0.80         # Maximum linear acceleration (m/s^2)
+MAX_DECEL_MPS2 = 1.20         # Maximum linear deceleration (m/s^2)
 
 # ==========================================
 # 2D CARTESIAN PLANE & A* GRID MAPPING
@@ -53,7 +57,8 @@ DEFAULT_PLOT_PATH = "autonomous_navigation/navigation_result.png"
 # ARTIFICIAL POTENTIAL FIELD (APF) TUNING
 # ==========================================
 K_ATT = 1.4                   # Attractive force towards current waypoint
-K_REP = 1.0                   # Repulsive force away from ToF obstacles
+K_REP = 0.35                  # Repulsive force away from ToF obstacles (tuned to prevent spikes)
+MAX_REP_FORCE = 2.0           # Saturation clamp on repulsive force to prevent erratic twitches
 SAFE_DIST = 0.55              # Distance (meters) at which obstacles begin repelling robot
 CRITICAL_STOP_DIST = 0.18     # Emergency stop distance (meters)
 SENSOR_ANGLES = [
@@ -61,6 +66,14 @@ SENSOR_ANGLES = [
     0.0,                      # Middle sensor (0 deg straight forward)
     -math.pi / 4.0            # Right sensor (-45 deg)
 ]
+
+# In-Place Pivot Heading Thresholds (with Hysteresis)
+PIVOT_ENTER_RAD = 0.85        # ~49 deg: enter in-place pivot if heading error exceeds this
+PIVOT_EXIT_RAD = 0.35         # ~20 deg: exit in-place pivot only when aligned within this
+
+# Obstacle Mapping Persistence & Distance Filter
+OBSTACLE_PERSISTENCE_COUNT = 2 # Must see obstacle in >= 2 consecutive cycles to map it
+OBSTACLE_MAP_MAX_DIST_M = 1.20 # Ignore distant noise (>1.2m) when updating the occupancy grid
 
 # ==========================================
 # TIME-OF-FLIGHT (VL53L0X) HARDWARE PINS (Pi BCM)
