@@ -13,15 +13,25 @@ WHEEL_BASE_M = 0.134
 TICKS_PER_REV = 720.0  # Synced with RobotController/Config.h (720.0 ticks/rev)
 
 # Startup push & cruise configuration:
-PUSH_SPEED_MPS = 0.80     # Max power speed demand (forces ESP32 PID output to 255 PWM)
-PUSH_DURATION_S = 0.18    # 180 ms high-torque kick to overcome static friction (stiction)
-DEFAULT_CRUISE_MPS = 0.60 # Normal intended cruising speed
+PUSH_SPEED_MPS = 0.50     # Breakaway speed demand (m/s) to overcome gearbox static friction
+PUSH_DURATION_S = 0.15    # 150 ms high-torque kick
+DEFAULT_CRUISE_MPS = 0.40 # Default intended cruising speed (m/s)
 
 # Target distance tolerance.
 DISTANCE_TOLERANCE_M = 0.02
 
-robot = serial.Serial(PORT, BAUD, timeout=0.02)
-time.sleep(2)
+# Active Heading Lock (Closed-Loop Course Correction)
+ENABLE_HEADING_LOCK = True
+KP_HEADING = 0.85          # Differential m/s per radian of heading error
+KD_HEADING = 0.12          # Damping gain to eliminate steering overshoot
+MAX_STEER_CORRECTION_MPS = 0.18 # Maximum differential wheel speed offset (m/s)
+
+try:
+    robot = serial.Serial(PORT, BAUD, timeout=0.02)
+    time.sleep(1.5)
+except (serial.SerialException, FileNotFoundError, OSError) as e:
+    print(f"[Warning] Could not open {PORT} ({e}). Telemetry may be simulated/unavailable.")
+    robot = None
 
 left_ticks = None
 right_ticks = None
@@ -33,6 +43,10 @@ def read_uart():
     global left_ticks, right_ticks, running
 
     while running:
+        if not robot or not robot.is_open:
+            time.sleep(0.1)
+            continue
+
         try:
             line = robot.readline().decode(
                 "utf-8", errors="ignore"
@@ -45,7 +59,7 @@ def read_uart():
                     left_ticks = int(parts[1])
                     right_ticks = int(parts[2])
 
-        except (ValueError, serial.SerialException):
+        except (ValueError, serial.SerialException, OSError):
             pass
 
 
@@ -55,7 +69,12 @@ reader.start()
 
 def send_velocity(left, right):
     # ESP32 expects wheel velocities in m/s.
-    robot.write(f"{left:.3f},{right:.3f}\n".encode())
+    if robot and robot.is_open:
+        try:
+            robot.write(f"{left:.3f},{right:.3f}\n".encode())
+            robot.flush()
+        except (serial.SerialException, OSError):
+            pass
 
 
 def stop():
@@ -85,6 +104,7 @@ def wait_for_encoders(timeout=5):
 
 def move(distance_m, cruise_speed=DEFAULT_CRUISE_MPS):
     """
+    Drives the robot a linear distance forward or backward with active heading-lock.
     Positive distance = forward.
     Negative distance = reverse.
     """
@@ -97,15 +117,17 @@ def move(distance_m, cruise_speed=DEFAULT_CRUISE_MPS):
     ticks_per_metre = TICKS_PER_REV / (
         2 * math.pi * WHEEL_RADIUS_M
     )
-    target_ticks = abs(distance_m) * ticks_per_metre
     direction = 1 if distance_m > 0 else -1
 
     # Limit travel time in case an encoder fails.
     timeout = max(5.0, abs(distance_m) / max(0.05, cruise_speed) * 3)
     start_time = time.monotonic()
+    last_time = start_time
+    last_heading_err = 0.0
     last_report = 0
 
-    print(f"\nMoving {distance_m:+.2f} m (Startup push -> Cruise at {cruise_speed:.2f} m/s)...")
+    mode_str = "Active Heading Lock" if ENABLE_HEADING_LOCK else "Open-Loop"
+    print(f"\nMoving {distance_m:+.2f} m [{mode_str}] (Cruise at {cruise_speed:.2f} m/s)...")
 
     try:
         while True:
@@ -114,50 +136,76 @@ def move(distance_m, cruise_speed=DEFAULT_CRUISE_MPS):
             if left is None or right is None:
                 raise RuntimeError("Encoder telemetry lost")
 
-            left_delta = abs(left - start_left)
-            right_delta = abs(right - start_right)
+            now = time.monotonic()
 
-            # Average the two wheel distances.
-            travelled_ticks = (left_delta + right_delta) / 2
-            travelled_m = travelled_ticks / ticks_per_metre
+            # Signed displacement of each wheel along the commanded direction of travel
+            d_left = direction * (left - start_left) / ticks_per_metre
+            d_right = direction * (right - start_right) / ticks_per_metre
+
+            # Average travelled distance along direction
+            travelled_m = (d_left + d_right) / 2.0
             remaining_m = abs(distance_m) - travelled_m
 
             if travelled_m >= abs(distance_m) - DISTANCE_TOLERANCE_M:
                 break
 
-            if time.monotonic() - start_time > timeout:
+            if now - start_time > timeout:
                 raise TimeoutError(
                     "Movement timed out. Check the wheels and encoders."
                 )
 
-            # --- DYNAMIC STARTUP PUSH & CRUISE CONTROL ---
-            elapsed = time.monotonic() - start_time
+            # --- 1. DYNAMIC SPEED PROFILE ---
+            elapsed = now - start_time
             if elapsed < PUSH_DURATION_S and remaining_m > 0.04:
-                # 1. High-power startup push to break static friction (demands 255 PWM from PID)
+                # Breakaway push to overcome gearbox static friction
                 current_speed = PUSH_SPEED_MPS
-            elif remaining_m < 0.04:
-                # 2. Smooth deceleration for the last 4 cm to prevent overshoot
-                current_speed = max(0.08, cruise_speed * (remaining_m / 0.04))
+            elif remaining_m < 0.05:
+                # Smooth deceleration for the final 5 cm to prevent overshoot
+                current_speed = max(0.08, cruise_speed * (remaining_m / 0.05))
             else:
-                # 3. Steady cruising speed
+                # Steady cruising speed
                 current_speed = cruise_speed
 
-            # Refresh command faster than the ESP32 timeout.
-            send_velocity(
-                direction * current_speed,
-                direction * current_speed,
-            )
+            # --- 2. ACTIVE HEADING LOCK (Differential Steering Correction) ---
+            # Heading error in radians: positive means robot veered left (right wheel ahead of left)
+            heading_err = (d_right - d_left) / WHEEL_BASE_M
 
-            if time.monotonic() - last_report > 0.3:
-                print(f"  Travelled: {travelled_m:.2f} m / {abs(distance_m):.2f} m (Current: {current_speed:.2f} m/s)")
-                last_report = time.monotonic()
+            dt = max(0.001, now - last_time)
+            d_err = (heading_err - last_heading_err) / dt
+            last_time = now
+            last_heading_err = heading_err
 
-            time.sleep(0.05)
+            if ENABLE_HEADING_LOCK:
+                # PD controller on heading error
+                v_steer = (KP_HEADING * heading_err) + (KD_HEADING * d_err)
+                v_steer = max(-MAX_STEER_CORRECTION_MPS, min(MAX_STEER_CORRECTION_MPS, v_steer))
+            else:
+                v_steer = 0.0
+
+            # Differential wheel command:
+            # If veered left (heading_err > 0), left wheel speeds up, right wheel slows down
+            cmd_l = direction * (current_speed + v_steer)
+            cmd_r = direction * (current_speed - v_steer)
+
+            # Send 20 Hz velocity packet to ESP32
+            send_velocity(cmd_l, cmd_r)
+
+            if now - last_report > 0.25:
+                heading_deg = math.degrees(heading_err)
+                print(
+                    f"  Travelled: {travelled_m:4.2f}m / {abs(distance_m):4.2f}m | "
+                    f"Heading Err: {heading_deg:+5.1f}° | "
+                    f"Wheels: L={cmd_l:+.2f}, R={cmd_r:+.2f} m/s"
+                )
+                last_report = now
+
+            time.sleep(0.04)
 
     finally:
         stop()
 
-    print(f"Movement complete: approximately {travelled_m:.2f} m\n")
+    heading_final_deg = math.degrees(heading_err)
+    print(f"Movement complete: {travelled_m:.2f} m | Final Heading Drift: {heading_final_deg:+.1f}°\n")
 
 
 def main():
