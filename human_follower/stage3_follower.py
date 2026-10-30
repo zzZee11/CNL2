@@ -48,16 +48,16 @@ class Stage3Config:
     
     # ── Stage 2 Distance Regulation Controls ──────────────────────────────────
     target_distance_m: float = 1.00    # Desired distance to maintain from the human (meters)
-    distance_deadband_m: float = 0.20  # +/- 20 cm sweet spot: between (target - 0.2) and (target + 0.2), v_lin = 0
+    distance_deadband_m: float = 0.30  # +/- 20 cm sweet spot: between (target - 0.2) and (target + 0.2), v_lin = 0
     kp_dist: float = 0.55              # Proportional gain for forward velocity: v = Kp * distance_error
     min_forward_speed: float = 0.20    # Minimum forward speed (m/s) to overcome DC motor gearbox stiction
-    max_forward_speed: float = 0.45    # Maximum cruising forward speed (m/s)
-    emergency_stop_dist_m: float = 0.25 # Distance threshold below which robot halts immediately
+    max_forward_speed: float = 0.80    # Maximum cruising forward speed (m/s)
+    emergency_stop_dist_m: float = 0.08 # Distance threshold below which robot halts immediately
     
     # ── Obstacle Avoidance Parameters (Layered on top of Stage 2) ─────────────
-    obstacle_safe_dist_m: float = 0.50 # Distance below which obstacles start repelling robot (meters)
+    obstacle_safe_dist_m: float = 0.15 # Distance below which obstacles start repelling robot (meters)
     k_rep: float = 0.10                # Obstacle repulsion gain
-    max_rep_turn_speed: float = 0.05   # Maximum differential turn bias from obstacles (m/s) - gentle steering
+    max_rep_turn_speed: float = 0.03   # Maximum differential turn bias from obstacles (m/s) - gentle steering
     swap_left_right_tofs: bool = False # Swap left and right ToF inputs if physical wiring is reversed
     # Sensor mount angles in radians relative to robot forward (+ is Left, - is Right)
     sensor_angles_rad: Tuple[float, float, float] = (
