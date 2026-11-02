@@ -65,6 +65,14 @@ def parse_args():
         help="Target orientation at destination in degrees (e.g. --heading 90, --heading -45)"
     )
     parser.add_argument(
+        "--patrol", "--cycles", type=int, default=None, metavar="N",
+        help="Patrol/shuttle back and forth between start (0, 0) and goal N times along exact path"
+    )
+    parser.add_argument(
+        "--return", "--roundtrip", dest="return_to_start", action="store_true",
+        help="Automatically retrace exact path forward back to start point after reaching goal"
+    )
+    parser.add_argument(
         "--distance", "-d", type=float, default=None,
         help="Linear forward distance to travel in meters (e.g. --distance 5.0)"
     )
@@ -105,7 +113,8 @@ def parse_goto_input(text: str):
       'goto (1.0, 5.0) 0.6 m/s 90 deg'
       'goto 1 2 90'
       'goto 1 2 0.5'
-    Returns: (target_x, target_y, speed_or_none, target_theta_deg_or_none) or None
+      'goto 1 1 --return'
+    Returns: (target_x, target_y, speed_or_none, target_theta_deg_or_none, return_to_start_bool) or None
     """
     cleaned = text.strip()
     if cleaned.lower().startswith("goto") or cleaned.lower().startswith("navigate"):
@@ -113,6 +122,12 @@ def parse_goto_input(text: str):
 
     target_theta = None
     speed = None
+    return_to_start = False
+
+    # Check for return / roundtrip flag
+    if re.search(r"\b(return|roundtrip|round-trip|back)\b", cleaned, re.IGNORECASE):
+        return_to_start = True
+        cleaned = re.sub(r"\b(return|roundtrip|round-trip|back)\b", "", cleaned, flags=re.IGNORECASE).strip()
 
     # 1. Check for explicit heading/deg/theta: e.g. "heading 90", "theta -45", "90 deg", "@ 90"
     m_hdg = re.search(r"(?:heading|theta|@)\s*([+-]?\d*\.?\d+)", cleaned, re.IGNORECASE)
@@ -173,7 +188,79 @@ def parse_goto_input(text: str):
                 elif speed is None:
                     speed = float(nums[3])
 
-        return gx, gy, speed, target_theta
+        return gx, gy, speed, target_theta, return_to_start
+    except ValueError:
+        return None
+
+
+def parse_patrol_input(text: str):
+    """
+    Parses patrol / shuttle commands like:
+      'patrol 1 1 3'
+      'patrol 1 2 5 90 deg'
+      'shuttle 1.0 1.0 2'
+      'patrol (1.0, 2.0) 3 speed 0.5 heading 90'
+    Returns: (target_x, target_y, cycles, speed_or_none, target_theta_or_none) or None
+    """
+    cleaned = text.strip()
+    if not (cleaned.lower().startswith("patrol") or cleaned.lower().startswith("shuttle")):
+        return None
+    cleaned = re.sub(r"^(patrol|shuttle)\s*", "", cleaned, flags=re.IGNORECASE).strip()
+
+    target_theta = None
+    speed = None
+
+    # Check for explicit heading/deg
+    m_hdg = re.search(r"(?:heading|theta|@)\s*([+-]?\d*\.?\d+)", cleaned, re.IGNORECASE)
+    if m_hdg:
+        try:
+            target_theta = float(m_hdg.group(1))
+            cleaned = cleaned[:m_hdg.start()] + " " + cleaned[m_hdg.end():]
+        except ValueError:
+            pass
+    else:
+        m_deg = re.search(r"([+-]?\d*\.?\d+)\s*(?:deg|degrees|°)", cleaned, re.IGNORECASE)
+        if m_deg:
+            try:
+                target_theta = float(m_deg.group(1))
+                cleaned = cleaned[:m_deg.start()] + " " + cleaned[m_deg.end():]
+            except ValueError:
+                pass
+
+    # Check for explicit speed
+    m_spd = re.search(r"(?:speed)\s*([+-]?\d*\.?\d+)", cleaned, re.IGNORECASE)
+    if m_spd:
+        try:
+            speed = float(m_spd.group(1))
+            cleaned = cleaned[:m_spd.start()] + " " + cleaned[m_spd.end():]
+        except ValueError:
+            pass
+    else:
+        m_mps = re.search(r"([+-]?\d*\.?\d+)\s*(?:m/s|mps)", cleaned, re.IGNORECASE)
+        if m_mps:
+            try:
+                speed = float(m_mps.group(1))
+                cleaned = cleaned[:m_mps.start()] + " " + cleaned[m_mps.end():]
+            except ValueError:
+                pass
+
+    nums = re.findall(r"[-+]?\d*\.?\d+", cleaned)
+    if len(nums) < 2:
+        return None
+
+    try:
+        gx = float(nums[0])
+        gy = float(nums[1])
+        cycles = int(float(nums[2])) if len(nums) >= 3 else 1
+
+        if len(nums) >= 4 and speed is None and target_theta is None:
+            v = float(nums[3])
+            if abs(v) > 2.0:
+                target_theta = v
+            else:
+                speed = v
+
+        return gx, gy, cycles, speed, target_theta
     except ValueError:
         return None
 
@@ -183,13 +270,13 @@ def run_interactive(nav, sensors, comm, default_plot_path=DEFAULT_PLOT_PATH):
     print("AUTONOMOUS CARTESIAN NAVIGATOR (A* Global + APF Vector Avoidance)")
     print("=" * 70)
     print("Navigation Commands:")
-    print("  goto <X> <Y> [heading] [speed]   Navigate to coordinate (e.g. 'goto 1 1 90 deg' or 'goto 1 5 0.7')")
-    print("  move <dist> m [speed]            Legacy forward drive (e.g. 'move 5 m 0.8' or 'move 2 m')")
-    print("  plot [filepath]         Save visualization map of the latest trajectory and obstacles")
-    print("  sensors                 Display real-time 3x ToF distance sensor readings")
-    print("  pose                    Display current dead-reckoning position (X, Y, Heading)")
-    print("  stop                    Emergency halt")
-    print("  quit  (or 'q')          Exit")
+    print("  goto <X> <Y> [heading] [speed] [--return]   Navigate to coordinate (e.g. 'goto 1 1 90 deg', 'goto 1 1 --return')")
+    print("  return / back / home                       Retrace exact path forward back to start & align to start orientation")
+    print("  patrol <X> <Y> <cycles> [heading] [speed]  Move back & forth N times along exact path (e.g. 'patrol 1 1 3')")
+    print("  move <dist> m [speed]                      Legacy forward drive (e.g. 'move 5 m 0.8' or 'move 2 m')")
+    print("  plot [filepath]                            Save visualization map of the latest trajectory and obstacles")
+    print("  sensors / pose / imu                       Display real-time telemetry")
+    print("  stop / quit                                Emergency halt / Exit")
     print("=" * 70 + "\n")
 
     while True:
@@ -252,15 +339,37 @@ def run_interactive(nav, sensors, comm, default_plot_path=DEFAULT_PLOT_PATH):
             print(f"[Plot] Image saved to: {saved}")
             continue
 
+        # Return to Start (Retrace path back to start point)
+        if cmd_lower in ("return", "back", "home", "retrace"):
+            nav.return_to_start(speed_mps=DEFAULT_SPEED, target_theta_deg=0.0, save_plot=True, plot_path=default_plot_path)
+            continue
+
+        # Patrol / Shuttle between Start and Goal N cycles
+        patrol_match = parse_patrol_input(line)
+        if (cmd_lower.startswith("patrol") or cmd_lower.startswith("shuttle")) and patrol_match:
+            gx, gy, cycles, spd, target_th = patrol_match
+            chosen_speed = spd if spd is not None else DEFAULT_SPEED
+            nav.patrol(
+                target_x=gx,
+                target_y=gy,
+                cycles=cycles,
+                speed_mps=chosen_speed,
+                target_theta_deg=target_th,
+                save_plot=True,
+                plot_path=default_plot_path
+            )
+            continue
+
         # Goto Cartesian coordinate (e.g. 'goto 1 1 90 deg', 'goto 1 5', 'goto 1.0 5.0 0.8')
         goto_match = parse_goto_input(line)
         if (cmd_lower.startswith("goto") or cmd_lower.startswith("navigate")) and goto_match:
-            gx, gy, spd, target_th = goto_match
+            gx, gy, spd, target_th, ret_to_start = goto_match
             chosen_speed = spd if spd is not None else DEFAULT_SPEED
             nav.navigate_to(
                 gx, gy,
                 speed_mps=chosen_speed,
                 target_theta_deg=target_th,
+                return_to_start=ret_to_start,
                 save_plot=True,
                 plot_path=default_plot_path
             )
@@ -328,14 +437,30 @@ def main():
             if args.heading is not None:
                 target_th = args.heading
 
-            nav.navigate_to(
-                target_x=gx,
-                target_y=gy,
-                speed_mps=args.speed,
-                target_theta_deg=target_th,
-                save_plot=not args.no_plot,
-                plot_path=args.plot
-            )
+            if args.patrol is not None:
+                # Patrol mode between (0, 0) and (gx, gy) for N cycles
+                nav.patrol(
+                    target_x=gx,
+                    target_y=gy,
+                    cycles=args.patrol,
+                    speed_mps=args.speed,
+                    target_theta_deg=target_th,
+                    save_plot=not args.no_plot,
+                    plot_path=args.plot
+                )
+            else:
+                nav.navigate_to(
+                    target_x=gx,
+                    target_y=gy,
+                    speed_mps=args.speed,
+                    target_theta_deg=target_th,
+                    return_to_start=args.return_to_start,
+                    save_plot=not args.no_plot,
+                    plot_path=args.plot
+                )
+        elif args.patrol is not None:
+            print("[Main] Error: --patrol requires a destination coordinate: --goal X Y (e.g. --goal 1.0 1.0 --patrol 3)")
+            return
         elif args.distance is not None:
             # Linear forward distance navigation: --distance D
             nav.move_distance(

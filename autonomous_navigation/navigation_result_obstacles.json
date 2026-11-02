@@ -1,5 +1,5 @@
 {
-  "mission_status": "GOAL REACHED",
+  "mission_status": "PATROL COMPLETED (2 Cycles)",
   "start_position": [
     0.0,
     0.0
@@ -10,43 +10,17 @@
   ],
   "target_orientation_deg": 90.0,
   "final_pose": {
-    "x": 1.0,
-    "y": 1.0,
-    "heading_deg": 90.0
+    "x": 0.065,
+    "y": 0.038,
+    "heading_deg": 1.4
   },
-  "distance_travelled_m": 1.45,
-  "elapsed_time_s": 4.2,
+  "distance_travelled_m": 5.016,
+  "elapsed_time_s": 0.0,
   "robot_dimensions": {
     "length_m": 0.18,
     "width_m": 0.134,
     "wheel_base_m": 0.134
   },
-  "obstacle_count": 5,
-  "obstacles": [
-    {
-      "id": 1,
-      "x": 0.3,
-      "y": 0.6
-    },
-    {
-      "id": 2,
-      "x": 0.45,
-      "y": 0.7
-    },
-    {
-      "id": 3,
-      "x": 0.6,
-      "y": 0.8
-    },
-    {
-      "id": 4,
-      "x": 0.75,
-      "y": 0.9
-    },
-    {
-      "id": 5,
-      "x": 0.9,
-      "y": 1.0
-    }
-  ]
+  "obstacle_count": 0,
+  "obstacles": []
 }

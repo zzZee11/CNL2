@@ -54,12 +54,28 @@ except ImportError:
     from plotter import save_navigation_plot
 
 
+def simplify_trajectory(trajectory: List[Tuple[float, float]], min_spacing: float = 0.06) -> List[Tuple[float, float]]:
+    """
+    Downsamples a dense trajectory to evenly spaced waypoints (min_spacing meters apart)
+    while strictly preserving the start point, intermediate curves, and destination.
+    """
+    if len(trajectory) <= 2:
+        return list(trajectory)
+    simplified = [trajectory[0]]
+    for p in trajectory[1:-1]:
+        if math.hypot(p[0] - simplified[-1][0], p[1] - simplified[-1][1]) >= min_spacing:
+            simplified.append(p)
+    simplified.append(trajectory[-1])
+    return simplified
+
+
 class AutonomousNavigator:
     def __init__(self, serial_comm, sensor_mgr):
         self.comm = serial_comm
         self.sensors = sensor_mgr
         self.grid = create_empty_grid()
         self.stop_requested = False
+        self.start_theta = 0.0
 
         # Obstacle persistence tracking to filter noise & floor glare
         self.sensor_hit_counts = [0, 0, 0]
@@ -82,6 +98,7 @@ class AutonomousNavigator:
         target_y: float,
         speed_mps: float = DEFAULT_SPEED,
         target_theta_deg: Optional[float] = None,
+        return_to_start: bool = False,
         save_plot: bool = True,
         plot_path: str = DEFAULT_PLOT_PATH,
     ) -> bool:
@@ -342,6 +359,16 @@ class AutonomousNavigator:
             if not align_ok:
                 print(f"[Nav] Note: Alignment finished outside tolerance.")
 
+        # If return-to-start was requested, immediately retrace path back to start
+        if return_to_start and mission_status == "GOAL REACHED" and not self.stop_requested:
+            print("\n[Nav] Outward destination reached! Commencing return trip along exact recorded path...")
+            return self.return_to_start(
+                speed_mps=speed_mps,
+                target_theta_deg=0.0,
+                save_plot=save_plot,
+                plot_path=plot_path
+            )
+
         # Final mission recording
         final_x, final_y, final_theta, final_dist = self.comm.get_pose()
         self.last_trajectory.append((final_x, final_y))
@@ -416,8 +443,11 @@ class AutonomousNavigator:
                 omega = (KP_ALIGN_TURN * heading_err) - (KD_ALIGN_TURN * yaw_rate)
                 omega_clamped = max(-MAX_ALIGN_SPEED, min(MAX_ALIGN_SPEED, omega))
 
-                if abs(omega_clamped) < MIN_ALIGN_SPEED:
-                    omega_clamped = math.copysign(MIN_ALIGN_SPEED, omega_clamped)
+                # Smoothly scale minimum speed down when error is small (< 6 deg)
+                # to prevent discrete step quantization hunting
+                effective_min = MIN_ALIGN_SPEED if abs(err_deg) > 6.0 else max(0.05, MIN_ALIGN_SPEED * (abs(err_deg) / 6.0))
+                if abs(omega_clamped) < effective_min:
+                    omega_clamped = math.copysign(effective_min, omega_clamped)
 
                 # Differential pivot: counter-rotating wheels
                 # heading_err > 0 means need CCW / left turn: Left wheel backward, Right wheel forward
@@ -442,6 +472,385 @@ class AutonomousNavigator:
             self.comm.stop()
 
         return False
+
+    def follow_path(
+        self,
+        path: List[Tuple[float, float]],
+        speed_mps: float = DEFAULT_SPEED,
+        target_theta_deg: Optional[float] = None,
+        label: str = "Follow Path",
+    ) -> bool:
+        """
+        Follows an exact sequence of 2D waypoints forward using APF local micro-avoidance
+        and pure pursuit lookahead, pivoting in-place initially to face the path heading.
+        Aligns in-place to target_theta_deg (if specified) upon arrival at destination.
+        """
+        if not path or len(path) < 1:
+            return True
+
+        self.stop_requested = False
+        speed_mps = max(0.10, min(1.0, float(speed_mps)))
+        waypoints = list(path)
+        goal_pos = waypoints[-1]
+
+        cur_x, cur_y, cur_theta, _ = self.comm.get_pose()
+        direct_dist = math.hypot(goal_pos[0] - cur_x, goal_pos[1] - cur_y)
+
+        # 1. Pivot in-place to face the path heading initially (Forward motion, NOT reverse!)
+        target_first_wp = waypoints[-1]
+        for wp in waypoints:
+            if math.hypot(wp[0] - cur_x, wp[1] - cur_y) >= 0.12:
+                target_first_wp = wp
+                break
+
+        dx_init = target_first_wp[0] - cur_x
+        dy_init = target_first_wp[1] - cur_y
+        if math.hypot(dx_init, dy_init) >= 0.05:
+            init_heading = math.atan2(dy_init, dx_init)
+            heading_diff = math.atan2(
+                math.sin(init_heading - cur_theta),
+                math.cos(init_heading - cur_theta)
+            )
+            if abs(math.degrees(heading_diff)) > 15.0:
+                print(f"[Nav] [{label}] Pivoting in-place to face path heading ({math.degrees(init_heading):+.1f}°)...")
+                self._align_to_orientation(math.degrees(init_heading))
+
+        # Reset kinematics state
+        self.is_pivoting = False
+        self.last_heading_err = 0.0
+        self.last_kinematics_time = time.time()
+
+        # Compute total path distance
+        path_dist = 0.0
+        for i in range(len(waypoints) - 1):
+            path_dist += math.hypot(waypoints[i+1][0] - waypoints[i][0], waypoints[i+1][1] - waypoints[i][1])
+        path_dist = max(path_dist, direct_dist)
+
+        timeout = (path_dist / speed_mps) * 3.5 + 15.0
+        start_time = time.time()
+        last_log_time = 0.0
+        mission_status = "FAILED"
+
+        try:
+            while not self.stop_requested and waypoints:
+                now = time.time()
+                if now - start_time > timeout:
+                    print(f"\n[Nav] [{label}] TIMEOUT: Path following took longer than {timeout:.1f}s.")
+                    mission_status = "TIMEOUT"
+                    break
+
+                cur_x, cur_y, cur_theta, total_dist = self.comm.get_pose()
+                current_pos = (cur_x, cur_y)
+
+                # Record trajectory
+                last_pt = self.last_trajectory[-1]
+                if math.hypot(cur_x - last_pt[0], cur_y - last_pt[1]) >= 0.02:
+                    self.last_trajectory.append((cur_x, cur_y))
+
+                dist_to_goal = math.hypot(goal_pos[0] - cur_x, goal_pos[1] - cur_y)
+                if dist_to_goal < GOAL_TOLERANCE_M:
+                    print(f"\n[Nav] [{label}] DESTINATION REACHED! Distance to target: {dist_to_goal:.2f} m (< {GOAL_TOLERANCE_M:.2f}m).")
+                    mission_status = "GOAL REACHED"
+                    break
+
+                # 2. Read live ToF distance sensors [Left, Middle, Right]
+                tof_readings = self.sensors.get_distances()
+
+                # Emergency stop if obstacle suddenly appears critically close (< 0.08m)
+                if any(0.02 < d < CRITICAL_STOP_DIST for d in tof_readings):
+                    print(f"[Nav] [{label}] EMERGENCY BRAKE: Hazard detected critically close! Halting.")
+                    self.comm.stop()
+                    time.sleep(0.12)
+                    new_tof = self.sensors.get_distances()
+                    if any(0.02 < d < CRITICAL_STOP_DIST for d in new_tof):
+                        print(f"[Nav] [{label}] Path blocked by persistent obstacle.")
+                        mission_status = "BLOCKED"
+                        break
+                    continue
+
+                # Advance waypoints
+                while len(waypoints) > 1:
+                    wp_dist = math.hypot(waypoints[0][0] - cur_x, waypoints[0][1] - cur_y)
+                    if wp_dist < 0.22:
+                        waypoints.pop(0)
+                    else:
+                        break
+
+                target_wp = waypoints[-1]
+                for wp in waypoints:
+                    if math.hypot(wp[0] - cur_x, wp[1] - cur_y) >= LOOKAHEAD_DIST_M:
+                        target_wp = wp
+                        break
+
+                effective_speed = speed_mps
+                if dist_to_goal < 0.40:
+                    effective_speed = max(0.10, speed_mps * (dist_to_goal / 0.40))
+
+                if self.comm.imu and self.comm.imu.has_collision():
+                    print(f"\n[Nav] [{label}] Physical impact shock detected by IMU! Halting.")
+                    mission_status = "COLLISION_HALT"
+                    break
+
+                f_total = calculate_apf(current_pos, target_wp, tof_readings, cur_theta, effective_speed)
+
+                desired_theta = math.atan2(f_total[1], f_total[0])
+                current_heading_err = math.atan2(
+                    math.sin(desired_theta - cur_theta),
+                    math.cos(desired_theta - cur_theta)
+                )
+                dt_kin = max(0.005, now - self.last_kinematics_time)
+                d_heading_err = (current_heading_err - self.last_heading_err) / dt_kin
+                self.last_heading_err = current_heading_err
+                self.last_kinematics_time = now
+
+                yaw_rate = self.comm.imu.get_yaw_rate_rad_s() if (self.comm.imu and self.comm.imu.is_ready()) else None
+
+                v_left, v_right = calculate_kinematics(
+                    f_total, cur_theta, effective_speed,
+                    is_pivoting=self.is_pivoting,
+                    d_heading_error=d_heading_err,
+                    yaw_rate=yaw_rate
+                )
+                self.is_pivoting = (v_left * v_right < -0.001)
+                self.comm.set_speeds(v_left, v_right)
+
+                if now - last_log_time > 0.3:
+                    heading_deg = math.degrees(cur_theta)
+                    heading_err_deg = math.degrees(current_heading_err)
+                    print(
+                        f"[Nav] [{label}] Pos: ({cur_x:5.2f}, {cur_y:5.2f})m | "
+                        f"Rem: {dist_to_goal:4.2f}m | "
+                        f"Heading: {heading_deg:+5.1f}° (Err: {heading_err_deg:+5.1f}°) | "
+                        f"Cmd: ({v_left:+.2f}, {v_right:+.2f}) m/s"
+                    )
+                    last_log_time = now
+
+                time.sleep(0.05)
+
+            if self.stop_requested:
+                mission_status = "STOPPED_BY_USER"
+
+        finally:
+            self.comm.stop()
+
+        # Final orientation alignment at destination if requested and goal was reached
+        if mission_status == "GOAL REACHED" and target_theta_deg is not None and not self.stop_requested:
+            self._align_to_orientation(target_theta_deg)
+
+        final_x, final_y, final_theta, _ = self.comm.get_pose()
+        self.last_trajectory.append((final_x, final_y))
+        return mission_status == "GOAL REACHED"
+
+    def return_to_start(
+        self,
+        speed_mps: float = DEFAULT_SPEED,
+        target_theta_deg: float = 0.0,
+        save_plot: bool = True,
+        plot_path: str = DEFAULT_PLOT_PATH,
+    ) -> bool:
+        """
+        Retraces the exact recorded trajectory back to the last start point (0, 0)
+        in FORWARD motion (pivoting in-place to face the return direction first), and
+        aligns to the exact original start orientation (0.0°).
+        """
+        if len(self.last_trajectory) < 2:
+            print("[Nav] Error: No recorded trajectory history to follow back. Drive somewhere first!")
+            return False
+
+        # Simplify recorded trajectory to clean waypoints and reverse it
+        forward_path = simplify_trajectory(self.last_trajectory)
+        return_path = list(reversed(forward_path))
+
+        dest_pt = return_path[-1]  # (0.0, 0.0)
+        print(f"\n[Nav] ========================================================")
+        print(f"[Nav] RETRACING EXACT PATH BACK TO START POINT ({dest_pt[0]:.2f}, {dest_pt[1]:.2f})")
+        print(f"[Nav] Return Waypoints: {len(return_path)} | Target Orientation: {target_theta_deg:+.1f}°")
+        print(f"[Nav] Mode: FORWARD MOTION (Pivoting in-place at goal first)")
+        print(f"[Nav] ========================================================\n")
+
+        ok = self.follow_path(
+            path=return_path,
+            speed_mps=speed_mps,
+            target_theta_deg=target_theta_deg,
+            label="Return to Start"
+        )
+
+        final_x, final_y, final_theta, total_dist = self.comm.get_pose()
+        mission_status = "RETURN COMPLETED" if ok else "RETURN FAILED"
+
+        print(f"\n[Nav] ========================================================")
+        print(f"[Nav] Return Mission Finished: {mission_status}")
+        print(f"[Nav] Final Pose: ({final_x:.2f}, {final_y:.2f}) m | Heading: {math.degrees(final_theta):.1f}° (Target: {target_theta_deg:+.1f}°)")
+        print(f"[Nav] Total Travelled: {total_dist:.2f} m")
+        print(f"[Nav] ========================================================\n")
+
+        if save_plot:
+            self.last_plot_path = save_navigation_plot(
+                trajectory=self.last_trajectory,
+                recorded_obstacles=self.last_obstacles,
+                start_pos=(0.0, 0.0),
+                goal_pos=forward_path[-1],
+                planned_path=self.last_planned_path,
+                final_pose=(final_x, final_y, final_theta),
+                total_dist=total_dist,
+                elapsed_s=0.0,
+                target_theta=math.radians(target_theta_deg),
+                status=mission_status,
+                output_path=plot_path,
+                grid=self.grid,
+            )
+
+        return ok
+
+    def patrol(
+        self,
+        target_x: float,
+        target_y: float,
+        cycles: int = 1,
+        speed_mps: float = DEFAULT_SPEED,
+        target_theta_deg: Optional[float] = None,
+        save_plot: bool = True,
+        plot_path: str = DEFAULT_PLOT_PATH,
+    ) -> bool:
+        """
+        Shuttles the robot back and forth between the start point (0, 0) and (target_x, target_y)
+        for a specified number of cycles, following the exact cleared path on all legs in FORWARD motion.
+        On arrival at destination or start, the robot aligns in-place to the exact orientation.
+
+        Args:
+            target_x: Target position along forward axis in meters
+            target_y: Target position along lateral axis in meters
+            cycles: Number of full round-trips (back and forth) to perform (default: 1)
+            speed_mps: Cruising speed in m/s
+            target_theta_deg: Target orientation at destination (e.g. 90 deg)
+            save_plot: If True, saves visualization map after all cycles
+            plot_path: Destination file path for map plot
+        """
+        cycles = max(1, int(cycles))
+        print(f"\n[Nav] ========================================================")
+        print(f"[Nav] STARTING PATROL MISSION: {cycles} Cycles (Back & Forth)")
+        print(f"[Nav] Destination: ({target_x:.2f}, {target_y:.2f}) m | Target Heading: {target_theta_deg if target_theta_deg is not None else 'Any'}")
+        print(f"[Nav] Total Planned Legs: {cycles * 2}")
+        print(f"[Nav] ========================================================\n")
+
+        # Cycle 1 - Outward Leg: Explore, plan, and establish safe collision-free path
+        print(f"[Nav] >>> CYCLE 1/{cycles} - Leg 1/{cycles*2}: Start (0,0) -> Goal ({target_x:.2f}, {target_y:.2f}) [A* Mapping]")
+        ok = self.navigate_to(
+            target_x=target_x,
+            target_y=target_y,
+            speed_mps=speed_mps,
+            target_theta_deg=target_theta_deg,
+            return_to_start=False,
+            save_plot=False,
+        )
+        if not ok or self.stop_requested:
+            print("[Nav] Patrol aborted: Failed outward leg to destination.")
+            if save_plot:
+                fx, fy, ft, fd = self.comm.get_pose()
+                self.last_plot_path = save_navigation_plot(
+                    trajectory=self.last_trajectory,
+                    recorded_obstacles=self.last_obstacles,
+                    start_pos=(0.0, 0.0),
+                    goal_pos=(target_x, target_y),
+                    planned_path=self.last_planned_path,
+                    final_pose=(fx, fy, ft),
+                    total_dist=fd,
+                    elapsed_s=0.0,
+                    target_theta=math.radians(target_theta_deg) if target_theta_deg is not None else None,
+                    status="PATROL_ABORTED",
+                    output_path=plot_path,
+                    grid=self.grid,
+                )
+            return False
+
+        # Extract established exact path
+        established_outward = simplify_trajectory(self.last_trajectory)
+        established_return = list(reversed(established_outward))
+
+        # Cycle 1 - Return Leg
+        print(f"\n[Nav] >>> CYCLE 1/{cycles} - Leg 2/{cycles*2}: Goal ({target_x:.2f}, {target_y:.2f}) -> Start (0,0) [Exact Path]")
+        ok = self.follow_path(
+            established_return,
+            speed_mps=speed_mps,
+            target_theta_deg=0.0,
+            label="Patrol C1 Return"
+        )
+        if not ok or self.stop_requested:
+            print("[Nav] Patrol aborted on cycle 1 return leg.")
+            if save_plot:
+                fx, fy, ft, fd = self.comm.get_pose()
+                self.last_plot_path = save_navigation_plot(
+                    trajectory=self.last_trajectory,
+                    recorded_obstacles=self.last_obstacles,
+                    start_pos=(0.0, 0.0),
+                    goal_pos=(target_x, target_y),
+                    planned_path=self.last_planned_path,
+                    final_pose=(fx, fy, ft),
+                    total_dist=fd,
+                    elapsed_s=0.0,
+                    target_theta=math.radians(target_theta_deg) if target_theta_deg is not None else None,
+                    status="PATROL_ABORTED",
+                    output_path=plot_path,
+                    grid=self.grid,
+                )
+            return False
+
+        # Cycles 2 through N
+        for c in range(2, cycles + 1):
+            if self.stop_requested:
+                break
+
+            leg_out = (c - 1) * 2 + 1
+            leg_ret = (c - 1) * 2 + 2
+
+            print(f"\n[Nav] >>> CYCLE {c}/{cycles} - Leg {leg_out}/{cycles*2}: Start (0,0) -> Goal ({target_x:.2f}, {target_y:.2f}) [Exact Path]")
+            ok = self.follow_path(
+                established_outward,
+                speed_mps=speed_mps,
+                target_theta_deg=target_theta_deg,
+                label=f"Patrol C{c} Outward"
+            )
+            if not ok or self.stop_requested:
+                print(f"[Nav] Patrol interrupted during cycle {c} outward leg.")
+                break
+
+            print(f"\n[Nav] >>> CYCLE {c}/{cycles} - Leg {leg_ret}/{cycles*2}: Goal ({target_x:.2f}, {target_y:.2f}) -> Start (0,0) [Exact Path]")
+            ok = self.follow_path(
+                established_return,
+                speed_mps=speed_mps,
+                target_theta_deg=0.0,
+                label=f"Patrol C{c} Return"
+            )
+            if not ok or self.stop_requested:
+                print(f"[Nav] Patrol interrupted during cycle {c} return leg.")
+                break
+
+        mission_status = f"PATROL COMPLETED ({cycles} Cycles)" if not self.stop_requested else "STOPPED_BY_USER"
+        final_x, final_y, final_theta, total_dist = self.comm.get_pose()
+
+        print(f"\n[Nav] ========================================================")
+        print(f"[Nav] Patrol Mission Finished: {mission_status}")
+        print(f"[Nav] Final Pose: ({final_x:.2f}, {final_y:.2f}) m | Heading: {math.degrees(final_theta):.1f}°")
+        print(f"[Nav] Total Travelled: {total_dist:.2f} m")
+        print(f"[Nav] ========================================================\n")
+
+        if save_plot:
+            self.last_plot_path = save_navigation_plot(
+                trajectory=self.last_trajectory,
+                recorded_obstacles=self.last_obstacles,
+                start_pos=(0.0, 0.0),
+                goal_pos=(target_x, target_y),
+                planned_path=self.last_planned_path,
+                final_pose=(final_x, final_y, final_theta),
+                total_dist=total_dist,
+                elapsed_s=0.0,
+                target_theta=math.radians(target_theta_deg) if target_theta_deg is not None else None,
+                status=mission_status,
+                output_path=plot_path,
+                grid=self.grid,
+            )
+
+        return mission_status.startswith("PATROL COMPLETED")
 
     def move_distance(
         self,
