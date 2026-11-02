@@ -61,8 +61,9 @@ DEFAULT_PLOT_PATH = "autonomous_navigation/navigation_result.png"
 K_ATT = 1.4                   # Attractive force towards current waypoint
 K_REP = 0.35                  # Repulsive force away from ToF obstacles (tuned to prevent spikes)
 MAX_REP_FORCE = 1.0           # Saturation clamp on repulsive force to prevent erratic twitches
-SAFE_DIST = 0.15              # Distance (meters) at which obstacles begin repelling robot
-CRITICAL_STOP_DIST = 0.08     # Emergency stop distance (meters)
+SAFE_DIST = 0.22              # Distance (meters) at which obstacles begin repelling robot
+CRITICAL_STOP_DIST = 0.12     # Emergency stop distance (meters) - stops before contact
+CRITICAL_PERSIST_TICKS = 2    # Consecutive cycles (100ms) required to confirm critical emergency hazard
 SENSOR_ANGLES = [
     math.pi / 4.0,            # Left sensor (+45 deg)
     0.0,                      # Middle sensor (0 deg straight forward)
@@ -87,9 +88,13 @@ KD_ALIGN_TURN = 0.05          # Gyro derivative damping gain for alignment
 MIN_ALIGN_SPEED = 0.18        # Minimum pivot speed to break static friction
 MAX_ALIGN_SPEED = 0.35        # Maximum pivot speed for final alignment
 
-# Obstacle Mapping Persistence & Distance Filter
-OBSTACLE_PERSISTENCE_COUNT = 4 # Must see obstacle in >= 4 consecutive cycles (200ms) to map it
-OBSTACLE_MAP_MAX_DIST_M = 0.85 # Focus mapping on clean near-field (<=85cm) to prevent floor glare
+# Critical Obstacle Mapping & Noise Rejection Filter
+TOF_MIN_VALID_M = 0.08        # Reject < 8cm readings (sensor casing crosstalk / lens smudges)
+TOF_MAX_VALID_M = 1.80        # Reject > 1.8m readings (low indoor ToF SNR / timeout)
+TOF_MEDIAN_WINDOW = 5         # Rolling median window (5 samples / 250ms) to discard single-tick spikes
+OBSTACLE_MAP_MAX_DIST_M = 0.70 # Focus mapping on clean near-field (<=70cm) to prevent 25° floor glare
+OBSTACLE_PERSISTENCE_COUNT = 5 # Number of spatial consensus hits required to confirm a real obstacle
+OBSTACLE_CONFIRM_RADIUS_M = 0.12 # World-frame clustering radius (12cm) for spatial consensus
 MIN_OBSTACLE_SPACING_M = 0.20  # Minimum 20 cm spacing to prevent duplicate dots along the same wall
 OBSTACLE_CHAIN_MAX_DIST_M = 0.35 # Max distance to link obstacle points into continuous barriers
 

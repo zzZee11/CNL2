@@ -19,9 +19,10 @@ from typing import List, Tuple, Optional
 try:
     from .config import (
         DEFAULT_SPEED, SENSOR_ANGLES,
-        CRITICAL_STOP_DIST, TOF_MAX_RANGE_M,
-        OBSTACLE_PERSISTENCE_COUNT, OBSTACLE_MAP_MAX_DIST_M,
-        MIN_OBSTACLE_SPACING_M,
+        CRITICAL_STOP_DIST, CRITICAL_PERSIST_TICKS,
+        TOF_MIN_VALID_M, TOF_MAX_RANGE_M,
+        OBSTACLE_PERSISTENCE_COUNT, OBSTACLE_CONFIRM_RADIUS_M,
+        OBSTACLE_MAP_MAX_DIST_M, MIN_OBSTACLE_SPACING_M,
         GOAL_TOLERANCE_M, LOOKAHEAD_DIST_M,
         FINAL_HEADING_TOLERANCE_DEG, KP_ALIGN_TURN, KD_ALIGN_TURN,
         MIN_ALIGN_SPEED, MAX_ALIGN_SPEED,
@@ -37,9 +38,10 @@ try:
 except ImportError:
     from config import (
         DEFAULT_SPEED, SENSOR_ANGLES,
-        CRITICAL_STOP_DIST, TOF_MAX_RANGE_M,
-        OBSTACLE_PERSISTENCE_COUNT, OBSTACLE_MAP_MAX_DIST_M,
-        MIN_OBSTACLE_SPACING_M,
+        CRITICAL_STOP_DIST, CRITICAL_PERSIST_TICKS,
+        TOF_MIN_VALID_M, TOF_MAX_RANGE_M,
+        OBSTACLE_PERSISTENCE_COUNT, OBSTACLE_CONFIRM_RADIUS_M,
+        OBSTACLE_MAP_MAX_DIST_M, MIN_OBSTACLE_SPACING_M,
         GOAL_TOLERANCE_M, LOOKAHEAD_DIST_M,
         FINAL_HEADING_TOLERANCE_DEG, KP_ALIGN_TURN, KD_ALIGN_TURN,
         MIN_ALIGN_SPEED, MAX_ALIGN_SPEED,
@@ -77,7 +79,9 @@ class AutonomousNavigator:
         self.stop_requested = False
         self.start_theta = 0.0
 
-        # Obstacle persistence tracking to filter noise & floor glare
+        # Obstacle spatial consensus tracking to eliminate floor glare & optical noise
+        self.candidate_obstacles: List[dict] = []
+        self.critical_hazard_ticks = 0
         self.sensor_hit_counts = [0, 0, 0]
         self.last_sensor_dists = [9.99, 9.99, 9.99]
         self.is_pivoting = False
@@ -145,6 +149,8 @@ class AutonomousNavigator:
         # Reset starting pose to (0, 0) facing theta = 0 (along the +X axis)
         self.comm.reset_odometry(start_x=0.0, start_y=0.0, start_theta=0.0)
         self.grid = create_empty_grid()
+        self.candidate_obstacles = []
+        self.critical_hazard_ticks = 0
         self.sensor_hit_counts = [0, 0, 0]
         self.last_sensor_dists = [9.99, 9.99, 9.99]
         self.is_pivoting = False
@@ -209,15 +215,25 @@ class AutonomousNavigator:
                 # 2. Read live ToF distance sensors [Left, Middle, Right]
                 tof_readings = self.sensors.get_distances()
 
-                # 3. Emergency brake if an obstacle suddenly appears critically close (< 0.18m)
-                if any(0.02 < d < CRITICAL_STOP_DIST for d in tof_readings):
-                    print(f"[Nav] EMERGENCY BRAKE: Critical hazard detected! Halting.")
+                # 3. Critical hazard check & emergency brake
+                # Requires confirmation over CRITICAL_PERSIST_TICKS (e.g. 2 cycles / 100ms) to reject optical spikes
+                hazard_close = any(TOF_MIN_VALID_M <= d < CRITICAL_STOP_DIST for d in tof_readings)
+                if hazard_close:
+                    self.critical_hazard_ticks += 1
+                else:
+                    self.critical_hazard_ticks = 0
+
+                if self.critical_hazard_ticks >= CRITICAL_PERSIST_TICKS:
+                    print(f"\n[Nav] EMERGENCY BRAKE: Confirmed critical hazard ({min(tof_readings):.2f}m < {CRITICAL_STOP_DIST:.2f}m)! Halting.")
                     self.comm.stop()
-                    time.sleep(0.12)
-                    # Mark all close obstacles into grid
+                    time.sleep(0.10)
+                    self.critical_hazard_ticks = 0
+
+                    # Mark all close confirmed obstacles into grid
+                    fresh_tof = self.sensors.get_distances()
                     for i in range(3):
-                        d = tof_readings[i]
-                        if 0.02 < d < CRITICAL_STOP_DIST:
+                        d = fresh_tof[i]
+                        if TOF_MIN_VALID_M <= d < (CRITICAL_STOP_DIST + 0.05):
                             sensor_angle = cur_theta + SENSOR_ANGLES[i]
                             obs_x = cur_x + (d * math.cos(sensor_angle))
                             obs_y = cur_y + (d * math.sin(sensor_angle))
@@ -235,35 +251,65 @@ class AutonomousNavigator:
                     waypoints = new_path
                     continue
 
-                # 4. Filter and map persistent obstacles into occupancy grid with circular inflation
+                # 4. Spatial Consensus Obstacle Mapping (World-Frame Clustering)
+                # Real stationary obstacles remain fixed in world coordinates as robot moves.
+                # Transient floor glare / moving reflections move along with the robot and are rejected.
                 map_changed = False
                 for i in range(3):
                     d = tof_readings[i]
-                    # Filter out floor reflections (<0.08m) and distant noise (>OBSTACLE_MAP_MAX_DIST_M)
-                    if 0.08 < d < OBSTACLE_MAP_MAX_DIST_M:
-                        if abs(d - self.last_sensor_dists[i]) < 0.20:
-                            self.sensor_hit_counts[i] += 1
-                        else:
-                            self.sensor_hit_counts[i] = 1
-                        self.last_sensor_dists[i] = d
+                    if TOF_MIN_VALID_M <= d <= OBSTACLE_MAP_MAX_DIST_M:
+                        sensor_angle = cur_theta + SENSOR_ANGLES[i]
+                        obs_x = cur_x + (d * math.cos(sensor_angle))
+                        obs_y = cur_y + (d * math.sin(sensor_angle))
 
-                        # Only map obstacle into A* grid if detected persistently (>= 4 cycles / 200ms)
-                        if self.sensor_hit_counts[i] >= OBSTACLE_PERSISTENCE_COUNT:
-                            sensor_angle = cur_theta + SENSOR_ANGLES[i]
-                            obs_x = cur_x + (d * math.cos(sensor_angle))
-                            obs_y = cur_y + (d * math.sin(sensor_angle))
+                        # Check if already mapped into permanent obstacle list
+                        already_mapped = any(
+                            math.hypot(obs_x - ox, obs_y - oy) < MIN_OBSTACLE_SPACING_M
+                            for ox, oy in self.last_obstacles
+                        )
+                        if already_mapped:
+                            continue
 
-                            # Proximity deduplication: Do not spawn duplicate obstacles if one exists within 20 cm
-                            is_duplicate = any(math.hypot(obs_x - ox, obs_y - oy) < MIN_OBSTACLE_SPACING_M for ox, oy in self.last_obstacles)
-                            if not is_duplicate:
-                                gx, gy = world_to_grid(obs_x, obs_y)
+                        # Match against active candidate clusters in world coordinates
+                        matched_candidate = None
+                        for cand in self.candidate_obstacles:
+                            if math.hypot(obs_x - cand["x"], obs_y - cand["y"]) <= OBSTACLE_CONFIRM_RADIUS_M:
+                                matched_candidate = cand
+                                break
+
+                        if matched_candidate:
+                            matched_candidate["hits"] += 1
+                            # Exponential moving average to refine world centroid
+                            matched_candidate["x"] = 0.70 * matched_candidate["x"] + 0.30 * obs_x
+                            matched_candidate["y"] = 0.70 * matched_candidate["y"] + 0.30 * obs_y
+                            matched_candidate["last_seen"] = now
+
+                            if matched_candidate["hits"] >= OBSTACLE_PERSISTENCE_COUNT and not matched_candidate["confirmed"]:
+                                matched_candidate["confirmed"] = True
+                                gx, gy = world_to_grid(matched_candidate["x"], matched_candidate["y"])
                                 if self.grid[gx][gy] == 0:
-                                    mark_obstacle(self.grid, obs_x, obs_y)
-                                    self.last_obstacles.append((obs_x, obs_y))
+                                    mark_obstacle(self.grid, matched_candidate["x"], matched_candidate["y"])
+                                    self.last_obstacles.append((matched_candidate["x"], matched_candidate["y"]))
                                     map_changed = True
-                    else:
-                        self.sensor_hit_counts[i] = 0
-                        self.last_sensor_dists[i] = d
+                                    print(
+                                        f"[Nav] Confirmed critical obstacle mapped at ({matched_candidate['x']:.2f}, {matched_candidate['y']:.2f}) m "
+                                        f"[Sensor {i}, Hits: {matched_candidate['hits']}]"
+                                    )
+                        else:
+                            self.candidate_obstacles.append({
+                                "x": obs_x,
+                                "y": obs_y,
+                                "hits": 1,
+                                "first_seen": now,
+                                "last_seen": now,
+                                "confirmed": False
+                            })
+
+                # Prune stale unconfirmed candidates older than 0.40s
+                self.candidate_obstacles = [
+                    c for c in self.candidate_obstacles
+                    if c["confirmed"] or (now - c["last_seen"] <= 0.40)
+                ]
 
                 # 5. Dynamic A* Replanning if current route is blocked
                 if map_changed and is_path_blocked(waypoints, self.grid):
@@ -529,6 +575,7 @@ class AutonomousNavigator:
         timeout = (path_dist / speed_mps) * 3.5 + 15.0
         start_time = time.time()
         last_log_time = 0.0
+        critical_hazard_ticks = 0
         mission_status = "FAILED"
 
         try:
@@ -556,17 +603,18 @@ class AutonomousNavigator:
                 # 2. Read live ToF distance sensors [Left, Middle, Right]
                 tof_readings = self.sensors.get_distances()
 
-                # Emergency stop if obstacle suddenly appears critically close (< 0.08m)
-                if any(0.02 < d < CRITICAL_STOP_DIST for d in tof_readings):
-                    print(f"[Nav] [{label}] EMERGENCY BRAKE: Hazard detected critically close! Halting.")
+                # Critical hazard check & emergency stop (< CRITICAL_STOP_DIST)
+                hazard_close = any(TOF_MIN_VALID_M <= d < CRITICAL_STOP_DIST for d in tof_readings)
+                if hazard_close:
+                    critical_hazard_ticks += 1
+                else:
+                    critical_hazard_ticks = 0
+
+                if critical_hazard_ticks >= CRITICAL_PERSIST_TICKS:
+                    print(f"\n[Nav] [{label}] EMERGENCY BRAKE: Confirmed critical obstacle on path ({min(tof_readings):.2f}m < {CRITICAL_STOP_DIST:.2f}m)! Halting.")
                     self.comm.stop()
-                    time.sleep(0.12)
-                    new_tof = self.sensors.get_distances()
-                    if any(0.02 < d < CRITICAL_STOP_DIST for d in new_tof):
-                        print(f"[Nav] [{label}] Path blocked by persistent obstacle.")
-                        mission_status = "BLOCKED"
-                        break
-                    continue
+                    mission_status = "BLOCKED"
+                    break
 
                 # Advance waypoints
                 while len(waypoints) > 1:

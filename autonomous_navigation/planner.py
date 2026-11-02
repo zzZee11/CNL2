@@ -15,6 +15,7 @@ try:
         ORIGIN_OFFSET_X, ORIGIN_OFFSET_Y,
         ROBOT_CLEARANCE_RADIUS, CELLS_TO_INFLATE,
         K_ATT, K_REP, MAX_REP_FORCE, SAFE_DIST, SENSOR_ANGLES,
+        TOF_MIN_VALID_M,
         PIVOT_ENTER_RAD, PIVOT_EXIT_RAD,
         KP_HEADING_NAV, KD_HEADING_NAV, HEADING_DEADBAND_RAD,
         WHEEL_BASE_M, MAX_ALLOWED_SPEED, MIN_MANEUVER_SPEED
@@ -25,6 +26,7 @@ except ImportError:
         ORIGIN_OFFSET_X, ORIGIN_OFFSET_Y,
         ROBOT_CLEARANCE_RADIUS, CELLS_TO_INFLATE,
         K_ATT, K_REP, MAX_REP_FORCE, SAFE_DIST, SENSOR_ANGLES,
+        TOF_MIN_VALID_M,
         PIVOT_ENTER_RAD, PIVOT_EXIT_RAD,
         KP_HEADING_NAV, KD_HEADING_NAV, HEADING_DEADBAND_RAD,
         WHEEL_BASE_M, MAX_ALLOWED_SPEED, MIN_MANEUVER_SPEED
@@ -184,8 +186,8 @@ def calculate_apf(current_pos, waypoint, tof_readings, current_theta, target_spe
     num_sensors = min(len(tof_readings), len(SENSOR_ANGLES))
     for i in range(num_sensors):
         distance = tof_readings[i]
-        # Ignore floor glare / extreme close (< 0.05m) and out-of-range (> SAFE_DIST)
-        if 0.05 < distance < SAFE_DIST:
+        # Ignore floor glare / extreme close (< TOF_MIN_VALID_M) and out-of-range (> SAFE_DIST)
+        if TOF_MIN_VALID_M <= distance < SAFE_DIST:
             # Inverse-square repulsion magnitude with saturation cap to prevent spikes
             raw_rep = K_REP * ((1.0 / distance) - (1.0 / SAFE_DIST)) / (distance ** 2)
             rep_mag = min(MAX_REP_FORCE, raw_rep)

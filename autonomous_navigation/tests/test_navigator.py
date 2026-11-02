@@ -8,6 +8,7 @@ import os
 import time
 import math
 import unittest
+from collections import deque
 from autonomous_navigation.config import (
     WHEEL_BASE_M, DEFAULT_SPEED, DEFAULT_PLOT_PATH
 )
@@ -296,6 +297,95 @@ class TestAutonomousNavigator(unittest.TestCase):
             self.assertIn("PATROL COMPLETED", data["mission_status"])
         if os.path.exists(json_file):
             os.remove(json_file)
+
+    def test_sensor_median_filter_rejects_spurious_noise(self):
+        # Test median filtering behavior with transient optical spikes
+        import statistics
+        mgr = DistanceSensorManager(use_mock=True)
+        mgr._median_window_size = 5
+        mgr._windows = [deque([9.99] * 5, maxlen=5) for _ in range(3)]
+
+        # Feed 1 spurious spike of 0.15m to center sensor (channel 1)
+        mgr._windows[1].append(0.15)
+        # Median of [9.99, 9.99, 9.99, 9.99, 0.15] is 9.99 -> spike rejected
+        filtered = float(statistics.median(mgr._windows[1]))
+        self.assertEqual(filtered, 9.99)
+
+        # Feed second spike
+        mgr._windows[1].append(0.14)
+        filtered = float(statistics.median(mgr._windows[1]))
+        self.assertEqual(filtered, 9.99)
+
+        # Feed 3rd consistent reading -> Now it becomes a confirmed persistent obstacle
+        mgr._windows[1].append(0.15)
+        filtered = float(statistics.median(mgr._windows[1]))
+        self.assertAlmostEqual(filtered, 0.15, places=2)
+
+    def test_spatial_consensus_filters_moving_glare(self):
+        # Simulated floor glare drifts with robot: relative distance stays 0.40m as robot moves
+        # Spatial consensus must reject drifting candidates and confirm static world targets
+        grid = create_empty_grid()
+        self.nav.grid = grid
+        self.nav.last_obstacles = []
+        self.nav.candidate_obstacles = []
+
+        # Simulate 10 ticks of moving floor glare (robot moving along X, distance constantly 0.40m ahead)
+        for tick in range(10):
+            cur_x = tick * 0.05  # robot advances 5cm per tick
+            cur_y = 0.0
+            now = time.time() + tick * 0.05
+            d = 0.40  # constant distance ahead of moving robot
+            obs_x = cur_x + d
+            obs_y = cur_y
+
+            # Run consensus logic
+            matched = None
+            for c in self.nav.candidate_obstacles:
+                if math.hypot(obs_x - c["x"], obs_y - c["y"]) <= 0.12:
+                    matched = c
+                    break
+            if matched:
+                matched["hits"] += 1
+                matched["x"] = 0.7 * matched["x"] + 0.3 * obs_x
+                matched["y"] = 0.7 * matched["y"] + 0.3 * obs_y
+                matched["last_seen"] = now
+            else:
+                self.nav.candidate_obstacles.append({
+                    "x": obs_x, "y": obs_y, "hits": 1, "last_seen": now, "confirmed": False
+                })
+            # Prune
+            self.nav.candidate_obstacles = [
+                c for c in self.nav.candidate_obstacles if (now - c["last_seen"] <= 0.20)
+            ]
+
+        # Drifting floor glare should never reach persistence threshold of 5 hits
+        confirmed = [c for c in self.nav.candidate_obstacles if c.get("hits", 0) >= 5]
+        self.assertEqual(len(confirmed), 0)
+
+        # Now simulate a true static obstacle at (0.80, 0.00) in the world frame
+        static_x, static_y = 0.80, 0.00
+        for tick in range(6):
+            cur_x = tick * 0.03
+            now = time.time() + 10.0 + tick * 0.05
+            d = static_x - cur_x
+            obs_x = cur_x + d
+            obs_y = 0.0
+            matched = None
+            for c in self.nav.candidate_obstacles:
+                if math.hypot(obs_x - c["x"], obs_y - c["y"]) <= 0.12:
+                    matched = c
+                    break
+            if matched:
+                matched["hits"] += 1
+                matched["last_seen"] = now
+            else:
+                self.nav.candidate_obstacles.append({
+                    "x": obs_x, "y": obs_y, "hits": 1, "last_seen": now, "confirmed": False
+                })
+
+        confirmed_static = [c for c in self.nav.candidate_obstacles if c.get("hits", 0) >= 5]
+        self.assertEqual(len(confirmed_static), 1)
+        self.assertAlmostEqual(confirmed_static[0]["x"], 0.80, delta=0.05)
 
 
 if __name__ == "__main__":
