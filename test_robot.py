@@ -28,9 +28,11 @@ DISTANCE_TOLERANCE_M = 0.02
 
 # Active Heading Lock (Closed-Loop Course Correction)
 ENABLE_HEADING_LOCK = True
-KP_HEADING = 0.85          # Differential m/s per radian of heading error
-KD_HEADING = 0.12          # Damping gain to eliminate steering overshoot
-MAX_STEER_CORRECTION_MPS = 0.18 # Maximum differential wheel speed offset (m/s)
+KP_HEADING = 0.50          # Gentle differential m/s per radian of heading error
+KD_HEADING = 0.08          # Damping gain to eliminate steering overshoot
+MAX_STEER_CORRECTION_MPS = 0.12 # Soft maximum differential wheel speed offset (m/s)
+HEADING_DEADBAND_RAD = math.radians(1.5) # 1.5° deadband: drive straight when aligned without jitter
+
 
 # Initialize Serial UART
 try:
@@ -148,6 +150,7 @@ def move(distance_m, cruise_speed=DEFAULT_CRUISE_MPS):
     last_time = start_time
     last_heading_err = 0.0
     last_report = 0
+    v_steer_smooth = 0.0
 
     start_heading_rad = imu.get_heading_rad() if (imu and imu.is_ready()) else 0.0
     sensor_tag = "IMU" if (imu and imu.is_ready()) else "ENC"
@@ -208,16 +211,24 @@ def move(distance_m, cruise_speed=DEFAULT_CRUISE_MPS):
             last_time = now
 
             if ENABLE_HEADING_LOCK:
-                # PD controller on heading error
-                v_steer = (KP_HEADING * heading_err) + (KD_HEADING * d_err)
-                v_steer = max(-MAX_STEER_CORRECTION_MPS, min(MAX_STEER_CORRECTION_MPS, v_steer))
+                # Deadband filter: within +/- 1.5 degrees, do not twitch wheels
+                if abs(heading_err) < HEADING_DEADBAND_RAD:
+                    v_steer_target = 0.0
+                else:
+                    # Subtract deadband to start correction smoothly from zero
+                    effective_err = heading_err - math.copysign(HEADING_DEADBAND_RAD, heading_err)
+                    v_steer_target = (KP_HEADING * effective_err) + (KD_HEADING * d_err)
+                    v_steer_target = max(-MAX_STEER_CORRECTION_MPS, min(MAX_STEER_CORRECTION_MPS, v_steer_target))
+
+                # Exponential moving average filter for silky smooth, jitter-free correction
+                v_steer_smooth = (0.70 * v_steer_smooth) + (0.30 * v_steer_target)
             else:
-                v_steer = 0.0
+                v_steer_smooth = 0.0
 
             # Differential wheel command:
             # If veered left (heading_err > 0), left wheel speeds up, right wheel slows down
-            cmd_l = direction * (current_speed + v_steer)
-            cmd_r = direction * (current_speed - v_steer)
+            cmd_l = direction * (current_speed + v_steer_smooth)
+            cmd_r = direction * (current_speed - v_steer_smooth)
 
             # Send 20 Hz velocity packet to ESP32
             send_velocity(cmd_l, cmd_r)
@@ -255,7 +266,7 @@ def turn(target_deg, max_speed=0.35):
     use_imu = (imu is not None and imu.is_ready())
 
     if use_imu:
-        start_heading = imu.get_heading_rad()
+        prev_heading = imu.get_heading_rad()
         sensor_tag = "IMU"
     else:
         start_left, start_right = wait_for_encoders()
@@ -276,9 +287,12 @@ def turn(target_deg, max_speed=0.35):
                 raise TimeoutError("Turn timed out.")
 
             if use_imu:
-                # Cumulative turned angle from gyro
-                raw_turn = imu.get_heading_rad() - start_heading
-                current_turn = math.atan2(math.sin(raw_turn), math.cos(raw_turn))
+                # Cumulative continuous rotation: unwrapped delta integration handles 360° and multi-turns
+                cur_h = imu.get_heading_rad()
+                delta_h = math.atan2(math.sin(cur_h - prev_heading), math.cos(cur_h - prev_heading))
+                current_turn += delta_h
+                prev_heading = cur_h
+
                 angle_error = target_rad - current_turn
                 yaw_rate = imu.get_yaw_rate_rad_s()
             else:
@@ -289,19 +303,20 @@ def turn(target_deg, max_speed=0.35):
                 angle_error = target_rad - current_turn
                 yaw_rate = 0.0
 
-            # Stop when aligned within 1.5 degrees
-            if abs(math.degrees(angle_error)) < 1.5:
+            # Stop when aligned within 2.0 degrees
+            if abs(math.degrees(angle_error)) < 2.0:
                 break
 
-            # Closed-loop PD turn control with smooth deceleration
-            kp_turn = 0.45
-            kd_turn = 0.06
+            # Closed-loop PD turn control with brisk finish
+            kp_turn = 0.85
+            kd_turn = 0.05
             omega = (kp_turn * angle_error) - (kd_turn * yaw_rate)
             omega_clamped = max(-max_speed, min(max_speed, omega))
 
-            # Minimum breakaway torque to overcome floor friction
-            if abs(omega_clamped) < 0.12:
-                omega_clamped = 0.12 if omega_clamped > 0 else -0.12
+            # Minimum pivot speed to overcome gearbox and floor friction (prevents sluggish crawl at the end)
+            min_pivot_speed = 0.18
+            if abs(omega_clamped) < min_pivot_speed:
+                omega_clamped = min_pivot_speed if omega_clamped > 0 else -min_pivot_speed
 
             # Differential pivot: counter-rotating wheels
             cmd_l = -omega_clamped
