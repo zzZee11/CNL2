@@ -74,7 +74,7 @@ flowchart TD
         Plotter["Plotter (plotter.py)\nGenerates navigation_result.png & JSON"]:::module
 
         NavEntry --> Nav_Mgr
-        Nav_Mgr -->|"Persistent ToF Filter (>=2 cycles)"| Grid
+        Nav_Mgr -->|"Spatial Consensus & Median Filter"| Grid
         Grid --> AStar
         AStar --> PurePursuit
         PurePursuit --> APF_Nav
@@ -256,7 +256,7 @@ python3 human_follower/main_stage3.py
 ---
 
 ### 3. Autonomous 2D Cartesian Navigation (`autonomous_navigation/`)
-Full-featured 2D grid mapping, global A\* path planning, and local APF avoidance.
+Full-featured 2D grid mapping, global A\* path planning, local APF avoidance, exact-path forward return, and multi-cycle patrol.
 
 #### Interactive Shell Mode:
 ```bash
@@ -264,19 +264,31 @@ python3 -m autonomous_navigation.main
 ```
 Available interactive commands:
 * `goto 1.5 2.0` $\to$ Navigates to coordinate $(X=1.5\text{m}, Y=2.0\text{m})$ avoiding obstacles.
-* `move 2.5 m 0.4` $\to$ Drives straight for 2.5 meters.
-* `sensors` $\to$ Displays live readings from Left, Middle, and Right ToF sensors.
+* `goto 1.0 1.0 90 deg` $\to$ Navigates to $(1.0, 1.0)$ and aligns in-place to target orientation $+90.0^\circ$.
+* `goto 1.0 1.0 --return` $\to$ Navigates to goal and automatically retraces back to start.
+* `return` / `back` $\to$ Retraces exact path forward back to `(0, 0)` (pivots in-place first) and restores $0.0^\circ$ start heading.
+* `patrol 1.0 1.0 3` $\to$ Shuttles back and forth 3 times along the established exact trajectory forward.
+* `move 2.5 m 0.4` $\to$ Drives straight for 2.5 meters at 0.4 m/s.
+* `turn 90 deg` $\to$ Closed-loop in-place pivot turn using MPU-6050 spatial IMU.
+* `sensors` $\to$ Displays live readings from Left, Middle, and Right ToF sensors (median-filtered).
 * `pose` $\to$ Prints dead-reckoning position $(X, Y, \theta)$ and distance travelled.
-* `plot` $\to$ Saves current path and obstacle map to `navigation_result.png`.
+* `plot` $\to$ Generates `navigation_result.png` (with continuous obstacle chains and swept path corridor) and companion JSON.
 * `stop` $\to$ Emergency stop.
+* `quit` $\to$ Clean exit.
 
 #### Direct CLI Execution:
 ```bash
-# Coordinate goal navigation
-python3 -m autonomous_navigation.main --goal 1.5 1.0 --speed 0.4
+# Coordinate goal navigation with orientation alignment
+python3 -m autonomous_navigation.main --goal 1.5 1.0 90 --speed 0.4
+
+# Roundtrip to goal and return along exact path forward
+python3 -m autonomous_navigation.main --goal 1.0 1.0 90 --return
+
+# Multi-cycle patrol (shuttle back and forth 3 times)
+python3 -m autonomous_navigation.main --goal 1.2 0.8 45 --patrol 3
 
 # Desktop mock simulation (generates map without hardware)
-python3 -m autonomous_navigation.main --mock --goal 1.0 1.0 --speed 0.6
+python3 -m autonomous_navigation.main --mock --goal 1.0 1.0 90 --patrol 2
 ```
 
 ---
