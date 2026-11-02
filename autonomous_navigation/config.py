@@ -91,7 +91,7 @@ MAX_ALIGN_SPEED = 0.35        # Maximum pivot speed for final alignment
 OBSTACLE_PERSISTENCE_COUNT = 4 # Must see obstacle in >= 4 consecutive cycles (200ms) to map it
 OBSTACLE_MAP_MAX_DIST_M = 0.85 # Focus mapping on clean near-field (<=85cm) to prevent floor glare
 MIN_OBSTACLE_SPACING_M = 0.20  # Minimum 20 cm spacing to prevent duplicate dots along the same wall
-OBSTACLE_CHAIN_MAX_DIST_M = 0.35 # Max distance to link obstacle points into continuous barriers
+OBSTACLE_CHAIN_MAX_DIST_M = 0.10 # Max distance to link obstacle points into continuous barriers
 
 
 # ==========================================
