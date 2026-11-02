@@ -21,6 +21,8 @@ WATCHDOG_TIMEOUT_MS = 500     # ESP32 auto-stops if link lost for > 500 ms
 # Must match RobotController/Config.h
 WHEEL_RADIUS_M = 0.0215       # 2.15 cm radius
 WHEEL_BASE_M = 0.134          # 13.4 cm track width between left and right wheels
+ROBOT_LENGTH_M = 0.18         # 18.0 cm physical body length
+ROBOT_WIDTH_M = 0.134         # 13.4 cm physical body width (matches wheel track)
 TICKS_PER_REV = 720.0         # Measured encoder counts per single wheel turn (Config.h)
 
 # ==========================================
@@ -79,11 +81,17 @@ HEADING_DEADBAND_RAD = 0.035  # ~2.0 deg deadband: drive straight when aligned
 # Goal Arrival Precision & Pure Pursuit Lookahead
 GOAL_TOLERANCE_M = 0.08       # Target arrival distance tolerance in meters
 LOOKAHEAD_DIST_M = 0.35       # Pure pursuit lookahead distance (meters) along waypoint path
+FINAL_HEADING_TOLERANCE_DEG = 2.5 # Final orientation alignment tolerance in degrees
+KP_ALIGN_TURN = 0.85          # Proportional gain for in-place orientation alignment
+KD_ALIGN_TURN = 0.05          # Gyro derivative damping gain for alignment
+MIN_ALIGN_SPEED = 0.18        # Minimum pivot speed to break static friction
+MAX_ALIGN_SPEED = 0.35        # Maximum pivot speed for final alignment
 
 # Obstacle Mapping Persistence & Distance Filter
 OBSTACLE_PERSISTENCE_COUNT = 4 # Must see obstacle in >= 4 consecutive cycles (200ms) to map it
 OBSTACLE_MAP_MAX_DIST_M = 0.85 # Focus mapping on clean near-field (<=85cm) to prevent floor glare
 MIN_OBSTACLE_SPACING_M = 0.20  # Minimum 20 cm spacing to prevent duplicate dots along the same wall
+OBSTACLE_CHAIN_MAX_DIST_M = 0.35 # Max distance to link obstacle points into continuous barriers
 
 
 # ==========================================

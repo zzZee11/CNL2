@@ -57,8 +57,12 @@ def parse_args():
         description="Autonomous 2D Cartesian & Distance Navigator with Obstacle Avoidance"
     )
     parser.add_argument(
-        "--goal", "-g", nargs=2, type=float, metavar=("X", "Y"), default=None,
-        help="Target Cartesian coordinate in meters (e.g. --goal 1.0 5.0)"
+        "--goal", "-g", nargs="+", type=float, default=None,
+        help="Target Cartesian coordinate in meters, with optional target orientation in degrees (e.g. --goal 1.0 5.0 or --goal 1.0 5.0 90)"
+    )
+    parser.add_argument(
+        "--heading", "--theta", type=float, default=None,
+        help="Target orientation at destination in degrees (e.g. --heading 90, --heading -45)"
     )
     parser.add_argument(
         "--distance", "-d", type=float, default=None,
@@ -93,29 +97,85 @@ def parse_args():
 
 def parse_goto_input(text: str):
     """
-    Parses various user coordinate inputs like:
-      'goto 1 5'
-      'goto 1.0 5.0 0.8'
-      'goto (1, 5)'
-      'goto (1.0, 5.0) 0.6'
-      '1 5'
-    Returns: (target_x, target_y, speed_or_none) or None
+    Parses various user coordinate and orientation inputs like:
+      'goto 1 1'
+      'goto 1.0 2.0 90 deg'
+      'goto 1 1 heading 90'
+      'goto 1 1 @ 90'
+      'goto (1.0, 5.0) 0.6 m/s 90 deg'
+      'goto 1 2 90'
+      'goto 1 2 0.5'
+    Returns: (target_x, target_y, speed_or_none, target_theta_deg_or_none) or None
     """
     cleaned = text.strip()
-    if cleaned.lower().startswith("goto"):
-        cleaned = cleaned[4:].strip()
+    if cleaned.lower().startswith("goto") or cleaned.lower().startswith("navigate"):
+        cleaned = re.sub(r"^(goto|navigate)\s*", "", cleaned, flags=re.IGNORECASE).strip()
 
-    # Extract all floating point numbers (including signs)
-    nums = re.findall(r"[-+]?\d*\.?\d+", cleaned)
-    if len(nums) >= 2:
+    target_theta = None
+    speed = None
+
+    # 1. Check for explicit heading/deg/theta: e.g. "heading 90", "theta -45", "90 deg", "@ 90"
+    m_hdg = re.search(r"(?:heading|theta|@)\s*([+-]?\d*\.?\d+)", cleaned, re.IGNORECASE)
+    if m_hdg:
         try:
-            gx = float(nums[0])
-            gy = float(nums[1])
-            spd = float(nums[2]) if len(nums) >= 3 else None
-            return gx, gy, spd
+            target_theta = float(m_hdg.group(1))
+            cleaned = cleaned[:m_hdg.start()] + " " + cleaned[m_hdg.end():]
         except ValueError:
-            return None
-    return None
+            pass
+    else:
+        m_deg = re.search(r"([+-]?\d*\.?\d+)\s*(?:deg|degrees|°)", cleaned, re.IGNORECASE)
+        if m_deg:
+            try:
+                target_theta = float(m_deg.group(1))
+                cleaned = cleaned[:m_deg.start()] + " " + cleaned[m_deg.end():]
+            except ValueError:
+                pass
+
+    # 2. Check for explicit speed: e.g. "speed 0.6", "0.6 m/s"
+    m_spd = re.search(r"(?:speed)\s*([+-]?\d*\.?\d+)", cleaned, re.IGNORECASE)
+    if m_spd:
+        try:
+            speed = float(m_spd.group(1))
+            cleaned = cleaned[:m_spd.start()] + " " + cleaned[m_spd.end():]
+        except ValueError:
+            pass
+    else:
+        m_mps = re.search(r"([+-]?\d*\.?\d+)\s*(?:m/s|mps)", cleaned, re.IGNORECASE)
+        if m_mps:
+            try:
+                speed = float(m_mps.group(1))
+                cleaned = cleaned[:m_mps.start()] + " " + cleaned[m_mps.end():]
+            except ValueError:
+                pass
+
+    # 3. Extract remaining numeric arguments
+    nums = re.findall(r"[-+]?\d*\.?\d+", cleaned)
+    if len(nums) < 2:
+        return None
+
+    try:
+        gx = float(nums[0])
+        gy = float(nums[1])
+
+        # Positional leftovers
+        if len(nums) >= 3 and speed is None and target_theta is None:
+            v = float(nums[2])
+            # If magnitude > 2.0, it is an orientation in degrees (e.g. 90, 180, -45)
+            # If magnitude <= 2.0, it is a cruising speed in m/s (e.g. 0.4, 0.7)
+            if abs(v) > 2.0:
+                target_theta = v
+            else:
+                speed = v
+
+            if len(nums) >= 4:
+                if target_theta is None:
+                    target_theta = float(nums[3])
+                elif speed is None:
+                    speed = float(nums[3])
+
+        return gx, gy, speed, target_theta
+    except ValueError:
+        return None
 
 
 def run_interactive(nav, sensors, comm, default_plot_path=DEFAULT_PLOT_PATH):
@@ -123,8 +183,8 @@ def run_interactive(nav, sensors, comm, default_plot_path=DEFAULT_PLOT_PATH):
     print("AUTONOMOUS CARTESIAN NAVIGATOR (A* Global + APF Vector Avoidance)")
     print("=" * 70)
     print("Navigation Commands:")
-    print("  goto <X> <Y> [speed]    Navigate to Cartesian coordinate (e.g. 'goto 1 5' or 'goto 1.0 5.0 0.7')")
-    print("  move <dist> m [speed]   Legacy forward drive (e.g. 'move 5 m 0.8' or 'move 2 m')")
+    print("  goto <X> <Y> [heading] [speed]   Navigate to coordinate (e.g. 'goto 1 1 90 deg' or 'goto 1 5 0.7')")
+    print("  move <dist> m [speed]            Legacy forward drive (e.g. 'move 5 m 0.8' or 'move 2 m')")
     print("  plot [filepath]         Save visualization map of the latest trajectory and obstacles")
     print("  sensors                 Display real-time 3x ToF distance sensor readings")
     print("  pose                    Display current dead-reckoning position (X, Y, Heading)")
@@ -192,12 +252,18 @@ def run_interactive(nav, sensors, comm, default_plot_path=DEFAULT_PLOT_PATH):
             print(f"[Plot] Image saved to: {saved}")
             continue
 
-        # Goto Cartesian coordinate (e.g. 'goto 1 5', 'goto 1.0 5.0 0.8', '(1, 5)')
+        # Goto Cartesian coordinate (e.g. 'goto 1 1 90 deg', 'goto 1 5', 'goto 1.0 5.0 0.8')
         goto_match = parse_goto_input(line)
         if (cmd_lower.startswith("goto") or cmd_lower.startswith("navigate")) and goto_match:
-            gx, gy, spd = goto_match
+            gx, gy, spd, target_th = goto_match
             chosen_speed = spd if spd is not None else DEFAULT_SPEED
-            nav.navigate_to(gx, gy, speed_mps=chosen_speed, save_plot=True, plot_path=default_plot_path)
+            nav.navigate_to(
+                gx, gy,
+                speed_mps=chosen_speed,
+                target_theta_deg=target_th,
+                save_plot=True,
+                plot_path=default_plot_path
+            )
             continue
 
         # Legacy Move command (e.g. 'move 5 m 0.8' or 'move 2 m')
@@ -252,12 +318,21 @@ def main():
 
     try:
         if args.goal is not None:
-            # 2D Cartesian target navigation: --goal X Y
-            gx, gy = args.goal
+            # 2D Cartesian target navigation: --goal X Y [THETA]
+            if len(args.goal) == 1:
+                print("[Main] Error: --goal requires at least 2 arguments: X Y (e.g. --goal 1.0 1.0)")
+                return
+            gx = args.goal[0]
+            gy = args.goal[1]
+            target_th = args.goal[2] if len(args.goal) >= 3 else None
+            if args.heading is not None:
+                target_th = args.heading
+
             nav.navigate_to(
                 target_x=gx,
                 target_y=gy,
                 speed_mps=args.speed,
+                target_theta_deg=target_th,
                 save_plot=not args.no_plot,
                 plot_path=args.plot
             )

@@ -47,12 +47,14 @@ class TestAutonomousNavigator(unittest.TestCase):
                 pass
 
     def test_goto_input_parsing(self):
-        # Test various formats of user input
-        self.assertEqual(parse_goto_input("goto 1 5"), (1.0, 5.0, None))
-        self.assertEqual(parse_goto_input("goto 1.0 5.0 0.8"), (1.0, 5.0, 0.8))
-        self.assertEqual(parse_goto_input("goto (1, 5)"), (1.0, 5.0, None))
-        self.assertEqual(parse_goto_input("goto (-2.5, 3.0) 0.6"), (-2.5, 3.0, 0.6))
-        self.assertEqual(parse_goto_input("navigate 4 -2"), (4.0, -2.0, None))
+        # Test various formats of user input with optional speed and orientation
+        self.assertEqual(parse_goto_input("goto 1 5"), (1.0, 5.0, None, None))
+        self.assertEqual(parse_goto_input("goto 1.0 5.0 0.8"), (1.0, 5.0, 0.8, None))
+        self.assertEqual(parse_goto_input("goto 1 2 90 deg"), (1.0, 2.0, None, 90.0))
+        self.assertEqual(parse_goto_input("goto 1 2 heading 90"), (1.0, 2.0, None, 90.0))
+        self.assertEqual(parse_goto_input("goto 1 1 @ 180"), (1.0, 1.0, None, 180.0))
+        self.assertEqual(parse_goto_input("goto (-2.5, 3.0) 0.6 m/s 90 deg"), (-2.5, 3.0, 0.6, 90.0))
+        self.assertEqual(parse_goto_input("navigate 4 -2 90"), (4.0, -2.0, None, 90.0))
         self.assertIsNone(parse_goto_input("invalid command"))
 
     def test_cartesian_astar_planning_to_1_5(self):
@@ -172,6 +174,61 @@ class TestAutonomousNavigator(unittest.TestCase):
         self.assertAlmostEqual(dist, 0.135, delta=0.02)
 
         fused_comm.close()
+
+    def test_continuous_obstacles_clustering_and_swept_path(self):
+        from autonomous_navigation.plotter import cluster_obstacles, compute_swept_path, get_robot_box_corners
+
+        # 1. Test clustering continuous points into ordered chains
+        wall = [(0.0, 1.0), (0.4, 1.0), (0.2, 1.0), (0.6, 1.0)]
+        isolated = [(3.0, 3.0)]
+        clusters = cluster_obstacles(wall + isolated, max_link_dist=0.35)
+        self.assertEqual(len(clusters), 2)
+        # Wall cluster has 4 points in monotonic order
+        wall_c = next(c for c in clusters if len(c) == 4)
+        wall_xs = [p[0] for p in wall_c]
+        self.assertTrue(wall_xs == [0.0, 0.2, 0.4, 0.6] or wall_xs == [0.6, 0.4, 0.2, 0.0])
+
+        # 2. Test swept-path polygon corridor
+        traj = [(0.0, 0.0), (1.0, 0.0), (2.0, 0.0)]
+        poly, left_t, right_t = compute_swept_path(traj, width=0.134)
+        self.assertEqual(len(poly), 6)
+        self.assertEqual(len(left_t), 3)
+        self.assertEqual(len(right_t), 3)
+        # Left track should be at +W/2 (+0.067m lateral) and right at -W/2 (-0.067m)
+        self.assertAlmostEqual(left_t[0][1], 0.067, delta=0.005)
+        self.assertAlmostEqual(right_t[0][1], -0.067, delta=0.005)
+
+        # 3. Test robot box corners
+        corners = get_robot_box_corners(0.0, 0.0, theta=0.0, length=0.18, width=0.134)
+        self.assertEqual(len(corners), 4)
+
+    def test_navigate_to_with_target_orientation(self):
+        # Run a simulated short Cartesian navigation to (0.4, 0.4) with target heading 90 deg
+        success = self.nav.navigate_to(
+            target_x=0.4,
+            target_y=0.4,
+            speed_mps=0.8,
+            target_theta_deg=90.0,
+            save_plot=True,
+            plot_path=self.test_plot_file
+        )
+        self.assertTrue(success)
+        cur_x, cur_y, cur_theta, _ = self.comm.get_pose()
+        # Verify robot reached destination and aligned close to 90 degrees
+        self.assertAlmostEqual(cur_x, 0.4, delta=0.10)
+        self.assertAlmostEqual(cur_y, 0.4, delta=0.10)
+        self.assertAlmostEqual(math.degrees(cur_theta), 90.0, delta=5.0)
+
+        # Verify companion JSON contains target_orientation_deg
+        json_file = os.path.splitext(self.test_plot_file)[0] + "_obstacles.json"
+        self.assertTrue(os.path.exists(json_file))
+        import json
+        with open(json_file, "r") as f:
+            data = json.load(f)
+            self.assertEqual(data["target_orientation_deg"], 90.0)
+            self.assertIn("robot_dimensions", data)
+        if os.path.exists(json_file):
+            os.remove(json_file)
 
 
 if __name__ == "__main__":

@@ -23,6 +23,8 @@ try:
         OBSTACLE_PERSISTENCE_COUNT, OBSTACLE_MAP_MAX_DIST_M,
         MIN_OBSTACLE_SPACING_M,
         GOAL_TOLERANCE_M, LOOKAHEAD_DIST_M,
+        FINAL_HEADING_TOLERANCE_DEG, KP_ALIGN_TURN, KD_ALIGN_TURN,
+        MIN_ALIGN_SPEED, MAX_ALIGN_SPEED,
         DEFAULT_PLOT_PATH
     )
     from .planner import (
@@ -39,6 +41,8 @@ except ImportError:
         OBSTACLE_PERSISTENCE_COUNT, OBSTACLE_MAP_MAX_DIST_M,
         MIN_OBSTACLE_SPACING_M,
         GOAL_TOLERANCE_M, LOOKAHEAD_DIST_M,
+        FINAL_HEADING_TOLERANCE_DEG, KP_ALIGN_TURN, KD_ALIGN_TURN,
+        MIN_ALIGN_SPEED, MAX_ALIGN_SPEED,
         DEFAULT_PLOT_PATH
     )
     from planner import (
@@ -77,6 +81,7 @@ class AutonomousNavigator:
         target_x: float,
         target_y: float,
         speed_mps: float = DEFAULT_SPEED,
+        target_theta_deg: Optional[float] = None,
         save_plot: bool = True,
         plot_path: str = DEFAULT_PLOT_PATH,
     ) -> bool:
@@ -84,11 +89,13 @@ class AutonomousNavigator:
         Navigates the robot to the specified 2D Cartesian plane coordinate (target_x, target_y)
         in meters relative to the start position (0, 0), dynamically mapping obstacles and
         avoiding them using A* global planning and local APF.
+        Optionally aligns to a specific orientation (target_theta_deg) at the destination.
 
         Args:
             target_x: Target position along the forward axis in meters (e.g. 1.0)
             target_y: Target position along the lateral axis in meters (e.g. 5.0, + is Left, - is Right)
             speed_mps: Target cruising speed in m/s (default: 0.60 m/s)
+            target_theta_deg: Optional target orientation (degrees) to align with at the goal
             save_plot: If True, saves a PNG image of the trajectory and obstacles after the run
             plot_path: Destination file path for the visualization image
         """
@@ -96,12 +103,16 @@ class AutonomousNavigator:
         target_x = float(target_x)
         target_y = float(target_y)
         speed_mps = max(0.10, min(1.0, float(speed_mps)))
+        target_theta_deg = float(target_theta_deg) if target_theta_deg is not None else None
 
         goal_pos = (target_x, target_y)
         start_pos = (0.0, 0.0)
         direct_dist = math.hypot(target_x, target_y)
 
         if direct_dist < 0.05:
+            if target_theta_deg is not None:
+                print(f"[Nav] Already at target position; aligning to heading {target_theta_deg:+.1f}°...")
+                return self._align_to_orientation(target_theta_deg)
             print(f"[Nav] Target ({target_x:.2f}, {target_y:.2f}) is already at current position.")
             return True
 
@@ -128,8 +139,9 @@ class AutonomousNavigator:
         self.last_obstacles = []
         self.last_planned_path = []
 
+        target_hdg_str = f"{target_theta_deg:+.1f}°" if target_theta_deg is not None else "Any"
         print(f"\n[Nav] ========================================================")
-        print(f"[Nav] MISSION: Navigate to Cartesian Target ({target_x:.2f}, {target_y:.2f}) m")
+        print(f"[Nav] MISSION: Navigate to Cartesian Target ({target_x:.2f}, {target_y:.2f}) m | Final Heading: {target_hdg_str}")
         print(f"[Nav] Direct Distance: {direct_dist:.2f} m | Cruise Speed: {speed_mps:.2f} m/s")
         print(f"[Nav] Obstacle Avoidance: ACTIVE (A* Global Grid + APF Local Vector)")
         print(f"[Nav] ========================================================\n")
@@ -324,14 +336,21 @@ class AutonomousNavigator:
         finally:
             self.comm.stop()
 
+        # Final orientation alignment at destination if requested and goal was reached
+        if mission_status == "GOAL REACHED" and target_theta_deg is not None and not self.stop_requested:
+            align_ok = self._align_to_orientation(target_theta_deg)
+            if not align_ok:
+                print(f"[Nav] Note: Alignment finished outside tolerance.")
+
         # Final mission recording
         final_x, final_y, final_theta, final_dist = self.comm.get_pose()
         self.last_trajectory.append((final_x, final_y))
         elapsed_total = time.time() - start_time
 
+        target_info = f" (Target: {target_theta_deg:+.1f}°)" if target_theta_deg is not None else ""
         print(f"\n[Nav] ========================================================")
         print(f"[Nav] Mission Finished: {mission_status}")
-        print(f"[Nav] Final Pose: ({final_x:.2f}, {final_y:.2f}) m | Heading: {math.degrees(final_theta):.1f}°")
+        print(f"[Nav] Final Pose: ({final_x:.2f}, {final_y:.2f}) m | Heading: {math.degrees(final_theta):.1f}°{target_info}")
         print(f"[Nav] Distance Travelled: {final_dist:.2f} m | Time: {elapsed_total:.1f} s")
         print(f"[Nav] ========================================================\n")
 
@@ -346,12 +365,83 @@ class AutonomousNavigator:
                 final_pose=(final_x, final_y, final_theta),
                 total_dist=final_dist,
                 elapsed_s=elapsed_total,
+                target_theta=math.radians(target_theta_deg) if target_theta_deg is not None else None,
                 status=mission_status,
                 output_path=plot_path,
                 grid=self.grid,
             )
 
         return mission_status == "GOAL REACHED"
+
+    def _align_to_orientation(self, target_deg: float, timeout_s: float = 6.0) -> bool:
+        """
+        Pivots the robot in-place at the destination to align with target_deg (degrees).
+        Uses MPU-6050 spatial IMU (or encoder odometry fallback) with closed-loop PD control.
+        """
+        target_rad = math.radians(target_deg)
+        target_rad = math.atan2(math.sin(target_rad), math.cos(target_rad))
+        print(f"\n[Nav] Final Alignment: Rotating in-place to target heading {target_deg:+.1f}°...")
+
+        self.comm.stop()
+        time.sleep(0.08)
+
+        timeout = max(timeout_s, abs(target_deg) / 30.0 + 3.0)
+        t0 = time.time()
+        last_report = 0.0
+
+        try:
+            while not self.stop_requested:
+                now = time.time()
+                if now - t0 > timeout:
+                    print(f"[Nav] Alignment timeout after {timeout:.1f}s.")
+                    return False
+
+                cur_x, cur_y, cur_theta, _ = self.comm.get_pose()
+
+                # Shortest angular error in [-pi, +pi]
+                heading_err = math.atan2(
+                    math.sin(target_rad - cur_theta),
+                    math.cos(target_rad - cur_theta)
+                )
+                err_deg = math.degrees(heading_err)
+
+                if abs(err_deg) <= FINAL_HEADING_TOLERANCE_DEG:
+                    self.comm.stop()
+                    print(f"[Nav] Final alignment achieved! Error: {err_deg:+.1f}° (<= {FINAL_HEADING_TOLERANCE_DEG:.1f}° tolerance).")
+                    return True
+
+                yaw_rate = self.comm.imu.get_yaw_rate_rad_s() if (self.comm.imu and self.comm.imu.is_ready()) else 0.0
+
+                # PD pivot control
+                omega = (KP_ALIGN_TURN * heading_err) - (KD_ALIGN_TURN * yaw_rate)
+                omega_clamped = max(-MAX_ALIGN_SPEED, min(MAX_ALIGN_SPEED, omega))
+
+                if abs(omega_clamped) < MIN_ALIGN_SPEED:
+                    omega_clamped = math.copysign(MIN_ALIGN_SPEED, omega_clamped)
+
+                # Differential pivot: counter-rotating wheels
+                # heading_err > 0 means need CCW / left turn: Left wheel backward, Right wheel forward
+                cmd_l = -omega_clamped
+                cmd_r = +omega_clamped
+                self.comm.set_speeds(cmd_l, cmd_r)
+
+                if now - last_report > 0.25:
+                    cur_deg = math.degrees(cur_theta)
+                    sensor_tag = "IMU" if (self.comm.imu and self.comm.imu.is_ready()) else "ODOM"
+                    print(
+                        f"  [Align] Current: {cur_deg:+5.1f}° | "
+                        f"Target: {target_deg:+5.1f}° | "
+                        f"Err: {err_deg:+5.1f}° [{sensor_tag}] | "
+                        f"Cmd: ({cmd_l:+.2f}, {cmd_r:+.2f}) m/s"
+                    )
+                    last_report = now
+
+                time.sleep(0.04)
+
+        finally:
+            self.comm.stop()
+
+        return False
 
     def move_distance(
         self,

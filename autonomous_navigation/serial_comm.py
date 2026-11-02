@@ -163,17 +163,19 @@ class RobotSerialComm:
             # Center displacement (meters) from wheel encoders
             delta_s = (dist_l + dist_r) / 2.0
 
-            # Sensor Fusion: If IMU is healthy, use gyro spatial orientation for theta
-            if self.imu and self.imu.is_ready():
+            # Sensor Fusion: If physical IMU is healthy, use gyro spatial orientation for theta
+            if self.imu and self.imu.is_ready() and not self.use_mock:
                 gyro_theta = self.imu.get_heading_rad()
                 d_theta = math.atan2(math.sin(gyro_theta - self.theta), math.cos(gyro_theta - self.theta))
                 mid_theta = self.theta + (d_theta / 2.0)
                 self.theta = gyro_theta
             else:
-                # Wheel-encoder differential fallback
+                # Wheel-encoder differential fallback (and simulated mock physics)
                 delta_theta = (dist_r - dist_l) / WHEEL_BASE_M
                 mid_theta = self.theta + (delta_theta / 2.0)
                 self.theta = math.atan2(math.sin(self.theta + delta_theta), math.cos(self.theta + delta_theta))
+                if self.imu and self.use_mock:
+                    self.imu.reset_heading(self.theta)
 
             self.x += delta_s * math.cos(mid_theta)
             self.y += delta_s * math.sin(mid_theta)
