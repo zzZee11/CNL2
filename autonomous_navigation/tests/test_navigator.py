@@ -147,6 +147,32 @@ class TestAutonomousNavigator(unittest.TestCase):
         if os.path.exists(json_file):
             os.remove(json_file)
 
+    def test_imu_fused_odometry(self):
+        from autonomous_navigation.imu import IMUManager
+        mock_imu = IMUManager(use_mock=True)
+        mock_imu.initialize()
+        mock_imu.start()
+        # Set spatial orientation to 90 degrees (+Y direction)
+        mock_imu.reset_heading(math.radians(90.0))
+
+        fused_comm = RobotSerialComm(use_mock=True, imu=mock_imu)
+        fused_comm.connect()
+        fused_comm.reset_odometry(0.0, 0.0, math.radians(90.0))
+
+        # Baseline first encoder reading
+        fused_comm._update_odometry(0, 0)
+        # Advance both wheels by 720 ticks (1 revolution = ~0.135 m)
+        fused_comm._update_odometry(720, 720)
+
+        x, y, theta, dist = fused_comm.get_pose()
+        # Since spatial gyro heading is 90° (+Y), forward movement must advance Y, not X
+        self.assertAlmostEqual(x, 0.0, delta=0.02)
+        self.assertGreater(y, 0.10)
+        self.assertAlmostEqual(math.degrees(theta), 90.0, delta=1.0)
+        self.assertAlmostEqual(dist, 0.135, delta=0.02)
+
+        fused_comm.close()
+
 
 if __name__ == "__main__":
     unittest.main()

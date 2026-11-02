@@ -200,14 +200,14 @@ def calculate_apf(current_pos, waypoint, tof_readings, current_theta, target_spe
     return (total_fx, total_fy)
 
 
-def calculate_kinematics(f_total, current_theta, target_speed, is_pivoting=False, d_heading_error=0.0):
+def calculate_kinematics(f_total, current_theta, target_speed, is_pivoting=False, d_heading_error=0.0, yaw_rate=None):
     """
     Converts resultant navigation force vector into differential-drive
     wheel speeds (v_left, v_right) in meters per second.
     Includes in-place pivot with hysteresis and active PD heading damping:
       - Enter pivot when |heading_error| > PIVOT_ENTER_RAD (~49°)
       - Exit pivot only when |heading_error| < PIVOT_EXIT_RAD (~20°)
-      - PD course correction with derivative damping when driving forward
+      - PD course correction with direct gyro yaw-rate damping when driving forward
     """
     norm = math.hypot(f_total[0], f_total[1])
     if norm < 0.01:
@@ -245,7 +245,11 @@ def calculate_kinematics(f_total, current_theta, target_speed, is_pivoting=False
         omega = 0.0
     else:
         # PD heading steering: proportional gain + derivative rate damping
-        omega = (KP_HEADING_NAV * heading_error) + (KD_HEADING_NAV * d_heading_error)
+        if yaw_rate is not None:
+            # Spatial gyro yaw-rate directly damps angular velocity overshoot
+            omega = (KP_HEADING_NAV * heading_error) - (KD_HEADING_NAV * yaw_rate)
+        else:
+            omega = (KP_HEADING_NAV * heading_error) + (KD_HEADING_NAV * d_heading_error)
 
     # Differential drive kinematics
     v_left = linear_v - (omega * WHEEL_BASE_M / 2.0)

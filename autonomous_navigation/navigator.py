@@ -266,6 +266,12 @@ class AutonomousNavigator:
                     # Smooth deceleration ramp for the final 40 cm to stop precisely at goal
                     effective_speed = max(0.10, speed_mps * (dist_to_goal / 0.40))
 
+                # Check for physical collision impact spike from IMU accelerometer
+                if self.comm.imu and self.comm.imu.has_collision():
+                    print("\n[Nav] EMERGENCY: Physical impact shock detected by IMU! Halting.")
+                    mission_status = "COLLISION_HALT"
+                    break
+
                 f_total = calculate_apf(current_pos, target_wp, tof_readings, cur_theta, effective_speed)
 
                 # Derivative rate of heading error for PD damping (Course Correction)
@@ -279,10 +285,14 @@ class AutonomousNavigator:
                 self.last_heading_err = current_heading_err
                 self.last_kinematics_time = now
 
+                # Use spatial gyro yaw rate if IMU is healthy, else fallback to numerical derivative
+                yaw_rate = self.comm.imu.get_yaw_rate_rad_s() if (self.comm.imu and self.comm.imu.is_ready()) else None
+
                 v_left, v_right = calculate_kinematics(
                     f_total, cur_theta, effective_speed,
                     is_pivoting=self.is_pivoting,
-                    d_heading_error=d_heading_err
+                    d_heading_error=d_heading_err,
+                    yaw_rate=yaw_rate
                 )
                 self.is_pivoting = (v_left * v_right < -0.001)
 

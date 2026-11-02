@@ -27,7 +27,7 @@ constexpr bool INVERT_RIGHT_MOTOR = false;
 
 // Left encoder
 constexpr int LEFT_ENCODER_A = 1;
-constexpr int LEFT_ENCODER_B = 2;
+constexpr int LEFT_ENCODER_B = 42;
 constexpr bool INVERT_LEFT_ENCODER = false;
 
 // Right encoder

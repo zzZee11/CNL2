@@ -17,23 +17,31 @@ try:
         SERIAL_PORT, SERIAL_BAUD, TX_RATE_HZ,
         WHEEL_RADIUS_M, WHEEL_BASE_M, TICKS_PER_REV,
         STARTUP_PUSH_SPEED, STARTUP_PUSH_DURATION_S,
-        MAX_ALLOWED_SPEED, MAX_ACCEL_MPS2, MAX_DECEL_MPS2
+        MAX_ALLOWED_SPEED, MAX_ACCEL_MPS2, MAX_DECEL_MPS2,
+        IMU_I2C_BUS, IMU_I2C_ADDR
     )
+    from .imu import IMUManager
 except ImportError:
     from config import (
         SERIAL_PORT, SERIAL_BAUD, TX_RATE_HZ,
         WHEEL_RADIUS_M, WHEEL_BASE_M, TICKS_PER_REV,
         STARTUP_PUSH_SPEED, STARTUP_PUSH_DURATION_S,
-        MAX_ALLOWED_SPEED, MAX_ACCEL_MPS2, MAX_DECEL_MPS2
+        MAX_ALLOWED_SPEED, MAX_ACCEL_MPS2, MAX_DECEL_MPS2,
+        IMU_I2C_BUS, IMU_I2C_ADDR
     )
+    try:
+        from imu import IMUManager
+    except ImportError:
+        IMUManager = None
 
 class RobotSerialComm:
-    def __init__(self, port=SERIAL_PORT, baud=SERIAL_BAUD, use_mock=False):
+    def __init__(self, port=SERIAL_PORT, baud=SERIAL_BAUD, use_mock=False, imu=None):
         self.port = port
         self.baud = baud
         self.use_mock = use_mock
         self.ser = None
         self.running = False
+        self.imu = imu
 
         # Commanded wheel speeds (m/s)
         self.cmd_left = 0.0
@@ -126,6 +134,8 @@ class RobotSerialComm:
             self.total_distance = 0.0
             self.prev_left_ticks = self.left_ticks
             self.prev_right_ticks = self.right_ticks
+            if self.imu and self.imu.is_ready():
+                self.imu.reset_heading(start_theta)
 
     def get_pose(self):
         """Returns (x, y, theta, total_distance_travelled)."""
@@ -133,7 +143,7 @@ class RobotSerialComm:
             return self.x, self.y, self.theta, self.total_distance
 
     def _update_odometry(self, l_ticks, r_ticks):
-        """Computes differential drive dead-reckoning from encoder tick changes."""
+        """Computes differential drive dead-reckoning fusing wheel encoders with MPU-6050 spatial gyro."""
         with self.state_lock:
             if not self.has_first_encoder:
                 self.prev_left_ticks = l_ticks
@@ -150,15 +160,23 @@ class RobotSerialComm:
             dist_l = (delta_l / TICKS_PER_REV) * (2.0 * math.pi * WHEEL_RADIUS_M)
             dist_r = (delta_r / TICKS_PER_REV) * (2.0 * math.pi * WHEEL_RADIUS_M)
 
-            # Center displacement and heading change
+            # Center displacement (meters) from wheel encoders
             delta_s = (dist_l + dist_r) / 2.0
-            delta_theta = (dist_r - dist_l) / WHEEL_BASE_M
 
-            # Midpoint integration for smooth curved paths
-            mid_theta = self.theta + (delta_theta / 2.0)
+            # Sensor Fusion: If IMU is healthy, use gyro spatial orientation for theta
+            if self.imu and self.imu.is_ready():
+                gyro_theta = self.imu.get_heading_rad()
+                d_theta = math.atan2(math.sin(gyro_theta - self.theta), math.cos(gyro_theta - self.theta))
+                mid_theta = self.theta + (d_theta / 2.0)
+                self.theta = gyro_theta
+            else:
+                # Wheel-encoder differential fallback
+                delta_theta = (dist_r - dist_l) / WHEEL_BASE_M
+                mid_theta = self.theta + (delta_theta / 2.0)
+                self.theta = math.atan2(math.sin(self.theta + delta_theta), math.cos(self.theta + delta_theta))
+
             self.x += delta_s * math.cos(mid_theta)
             self.y += delta_s * math.sin(mid_theta)
-            self.theta = math.atan2(math.sin(self.theta + delta_theta), math.cos(self.theta + delta_theta))
             self.total_distance += abs(delta_s)
 
     def _tx_loop(self):
@@ -268,6 +286,8 @@ class RobotSerialComm:
         """Stops the robot and closes serial connection."""
         self.running = False
         self.stop()
+        if self.imu:
+            self.imu.stop()
         if not self.use_mock and self.ser and self.ser.is_open:
             try:
                 for _ in range(3):

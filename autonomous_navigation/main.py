@@ -34,17 +34,22 @@ if pkg_dir not in sys.path:
     sys.path.insert(0, pkg_dir)
 
 try:
-    from .config import SERIAL_PORT, SERIAL_BAUD, DEFAULT_SPEED, DEFAULT_PLOT_PATH
+    from .config import SERIAL_PORT, SERIAL_BAUD, DEFAULT_SPEED, DEFAULT_PLOT_PATH, IMU_I2C_BUS, IMU_I2C_ADDR
     from .sensors import DistanceSensorManager
     from .serial_comm import RobotSerialComm
     from .navigator import AutonomousNavigator
     from .plotter import save_navigation_plot
+    from .imu import IMUManager
 except ImportError:
-    from config import SERIAL_PORT, SERIAL_BAUD, DEFAULT_SPEED, DEFAULT_PLOT_PATH
+    from config import SERIAL_PORT, SERIAL_BAUD, DEFAULT_SPEED, DEFAULT_PLOT_PATH, IMU_I2C_BUS, IMU_I2C_ADDR
     from sensors import DistanceSensorManager
     from serial_comm import RobotSerialComm
     from navigator import AutonomousNavigator
     from plotter import save_navigation_plot
+    try:
+        from imu import IMUManager
+    except ImportError:
+        IMUManager = None
 
 
 def parse_args():
@@ -156,6 +161,17 @@ def run_interactive(nav, sensors, comm, default_plot_path=DEFAULT_PLOT_PATH):
             print(f"[Pose] X: {x:.2f}m | Y: {y:.2f}m | Heading: {math.degrees(theta):.1f}° | Travelled: {dist:.2f}m")
             continue
 
+        if cmd_lower in ("imu", "gyro"):
+            if comm.imu and comm.imu.is_ready():
+                hdg = comm.imu.get_heading_deg()
+                rate = comm.imu.get_yaw_rate_deg_s()
+                ax, ay, az = comm.imu.get_linear_accel()
+                pitch, roll = comm.imu.get_tilt_deg()
+                print(f"[IMU] Heading: {hdg:+5.1f}° | TurnRate: {rate:+5.1f}°/s | Accel: [{ax:+4.2f}, {ay:+4.2f}, {az:+4.2f}] m/s² | Tilt: Pitch={pitch:+.1f}°, Roll={roll:+.1f}°")
+            else:
+                print("[IMU] IMU not connected or in mock mode.")
+            continue
+
         # Plot command
         if cmd_lower.startswith("plot"):
             parts = line.split(maxsplit=1)
@@ -211,8 +227,23 @@ def main():
     sensors.initialize()
     sensors.start()
 
-    comm = RobotSerialComm(port=args.port, baud=args.baud, use_mock=args.mock)
+    # Initialize MPU-6050 spatial IMU
+    imu = None
+    if IMUManager:
+        try:
+            candidate_imu = IMUManager(bus_num=IMU_I2C_BUS, address=IMU_I2C_ADDR, use_mock=args.mock)
+            if candidate_imu.initialize():
+                candidate_imu.start()
+                imu = candidate_imu
+                print("[Main] MPU-6050 spatial IMU fused into autonomous navigation!")
+        except Exception as e:
+            print(f"[Main] IMU initialization warning: {e}. Using pure encoder odometry.")
+            imu = None
+
+    comm = RobotSerialComm(port=args.port, baud=args.baud, use_mock=args.mock, imu=imu)
     if not comm.connect():
+        if imu:
+            imu.stop()
         sensors.close()
         sys.exit(1)
     comm.start()

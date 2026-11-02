@@ -66,9 +66,9 @@ void readSpeedsFromSerialMonitor() {
                 // Handle "diag" or "d" pin diagnostic
                 else if (strcasecmp(usbBuffer, "diag") == 0 || strcasecmp(usbBuffer, "d") == 0) {
                     Serial.println("\n--- ENCODER HARDWARE PIN DIAGNOSTIC ---");
-                    Serial.printf("Left Encoder  -> Pin 1 (Phase A): %d (edges: %u) | Pin 2 (Phase B): %d (edges: %u)\n",
-                                  digitalRead(LEFT_ENCODER_A), EncoderReader::getLeftTransitionsA(),
-                                  digitalRead(LEFT_ENCODER_B), EncoderReader::getLeftTransitionsB());
+                    Serial.printf("Left Encoder  -> Pin %d (Phase A): %d (edges: %u) | Pin %d (Phase B): %d (edges: %u)\n",
+                                  LEFT_ENCODER_A, digitalRead(LEFT_ENCODER_A), EncoderReader::getLeftTransitionsA(),
+                                  LEFT_ENCODER_B, digitalRead(LEFT_ENCODER_B), EncoderReader::getLeftTransitionsB());
                     Serial.printf("Right Encoder -> Pin 12 (Phase A): %d | Pin 13 (Phase B): %d\n",
                                   digitalRead(RIGHT_ENCODER_A), digitalRead(RIGHT_ENCODER_B));
                     Serial.printf("Left Mode: %s\n",

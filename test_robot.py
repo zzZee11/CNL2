@@ -226,9 +226,12 @@ def move(distance_m, cruise_speed=DEFAULT_CRUISE_MPS):
                 v_steer_smooth = 0.0
 
             # Differential wheel command:
-            # If veered left (heading_err > 0), left wheel speeds up, right wheel slows down
-            cmd_l = direction * (current_speed + v_steer_smooth)
-            cmd_r = direction * (current_speed - v_steer_smooth)
+            # Base velocity is signed by direction (+ forward, - reverse).
+            # To correct heading error (veer left > 0), left wheel must ALWAYS be faster than right (cmd_l > cmd_r),
+            # whether driving forward or in reverse. Adding v_steer directly to base_speed prevents sign inversion in reverse.
+            base_speed = direction * current_speed
+            cmd_l = base_speed + v_steer_smooth
+            cmd_r = base_speed - v_steer_smooth
 
             # Send 20 Hz velocity packet to ESP32
             send_velocity(cmd_l, cmd_r)
