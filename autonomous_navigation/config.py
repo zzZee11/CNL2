@@ -47,7 +47,7 @@ GRID_RES = 0.10               # 10 cm per cell (resolution)
 ORIGIN_OFFSET_X = 15.0        # (0, 0) starts at cell index (150, 150)
 ORIGIN_OFFSET_Y = 15.0        # (0, 0) starts at cell index (150, 150)
 
-ROBOT_CLEARANCE_RADIUS = 0.22 # 22 cm radius padding for circular obstacle inflation
+ROBOT_CLEARANCE_RADIUS = 0.14 # 14 cm radius padding (matches 13.4 cm robot width with 7 cm margin)
 CELLS_TO_INFLATE = int(math.ceil(ROBOT_CLEARANCE_RADIUS / GRID_RES))
 
 # Default path to save trajectory and obstacle map image
@@ -81,8 +81,10 @@ GOAL_TOLERANCE_M = 0.08       # Target arrival distance tolerance in meters
 LOOKAHEAD_DIST_M = 0.35       # Pure pursuit lookahead distance (meters) along waypoint path
 
 # Obstacle Mapping Persistence & Distance Filter
-OBSTACLE_PERSISTENCE_COUNT = 2 # Must see obstacle in >= 2 consecutive cycles to map it
-OBSTACLE_MAP_MAX_DIST_M = 1.20 # Ignore distant noise (>1.2m) when updating the occupancy grid
+OBSTACLE_PERSISTENCE_COUNT = 4 # Must see obstacle in >= 4 consecutive cycles (200ms) to map it
+OBSTACLE_MAP_MAX_DIST_M = 0.85 # Focus mapping on clean near-field (<=85cm) to prevent floor glare
+MIN_OBSTACLE_SPACING_M = 0.20  # Minimum 20 cm spacing to prevent duplicate dots along the same wall
+
 
 # ==========================================
 # TIME-OF-FLIGHT (VL53L0X) HARDWARE PINS (Pi BCM)

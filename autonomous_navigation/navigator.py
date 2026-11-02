@@ -21,6 +21,7 @@ try:
         DEFAULT_SPEED, SENSOR_ANGLES,
         CRITICAL_STOP_DIST, TOF_MAX_RANGE_M,
         OBSTACLE_PERSISTENCE_COUNT, OBSTACLE_MAP_MAX_DIST_M,
+        MIN_OBSTACLE_SPACING_M,
         GOAL_TOLERANCE_M, LOOKAHEAD_DIST_M,
         DEFAULT_PLOT_PATH
     )
@@ -36,6 +37,7 @@ except ImportError:
         DEFAULT_SPEED, SENSOR_ANGLES,
         CRITICAL_STOP_DIST, TOF_MAX_RANGE_M,
         OBSTACLE_PERSISTENCE_COUNT, OBSTACLE_MAP_MAX_DIST_M,
+        MIN_OBSTACLE_SPACING_M,
         GOAL_TOLERANCE_M, LOOKAHEAD_DIST_M,
         DEFAULT_PLOT_PATH
     )
@@ -208,25 +210,28 @@ class AutonomousNavigator:
                 map_changed = False
                 for i in range(3):
                     d = tof_readings[i]
-                    # Filter out floor reflections (<0.06m) and distant noise (>OBSTACLE_MAP_MAX_DIST_M)
-                    if 0.06 < d < OBSTACLE_MAP_MAX_DIST_M:
-                        if abs(d - self.last_sensor_dists[i]) < 0.25:
+                    # Filter out floor reflections (<0.08m) and distant noise (>OBSTACLE_MAP_MAX_DIST_M)
+                    if 0.08 < d < OBSTACLE_MAP_MAX_DIST_M:
+                        if abs(d - self.last_sensor_dists[i]) < 0.20:
                             self.sensor_hit_counts[i] += 1
                         else:
                             self.sensor_hit_counts[i] = 1
                         self.last_sensor_dists[i] = d
 
-                        # Only map obstacle into A* grid if detected persistently (>= 2 cycles)
+                        # Only map obstacle into A* grid if detected persistently (>= 4 cycles / 200ms)
                         if self.sensor_hit_counts[i] >= OBSTACLE_PERSISTENCE_COUNT:
                             sensor_angle = cur_theta + SENSOR_ANGLES[i]
                             obs_x = cur_x + (d * math.cos(sensor_angle))
                             obs_y = cur_y + (d * math.sin(sensor_angle))
 
-                            gx, gy = world_to_grid(obs_x, obs_y)
-                            if self.grid[gx][gy] == 0:
-                                mark_obstacle(self.grid, obs_x, obs_y)
-                                self.last_obstacles.append((obs_x, obs_y))
-                                map_changed = True
+                            # Proximity deduplication: Do not spawn duplicate obstacles if one exists within 20 cm
+                            is_duplicate = any(math.hypot(obs_x - ox, obs_y - oy) < MIN_OBSTACLE_SPACING_M for ox, oy in self.last_obstacles)
+                            if not is_duplicate:
+                                gx, gy = world_to_grid(obs_x, obs_y)
+                                if self.grid[gx][gy] == 0:
+                                    mark_obstacle(self.grid, obs_x, obs_y)
+                                    self.last_obstacles.append((obs_x, obs_y))
+                                    map_changed = True
                     else:
                         self.sensor_hit_counts[i] = 0
                         self.last_sensor_dists[i] = d
