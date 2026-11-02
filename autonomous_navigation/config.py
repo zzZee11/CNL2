@@ -97,3 +97,13 @@ ADDR_RIGHT = 0x32             # Readdressed I2C address
 
 TOF_MAX_RANGE_M = 2.0         # Maximum reliable ToF mapping distance (meters)
 TOF_SAMPLE_INTERVAL_S = 0.05  # 20 Hz ToF polling rate
+
+# ==========================================
+# INERTIAL MEASUREMENT UNIT (MPU-6050)
+# ==========================================
+IMU_I2C_BUS = 1                  # Standard Raspberry Pi I2C bus 1
+IMU_I2C_ADDR = 0x68              # Default MPU-6050 address (AD0 to GND)
+IMU_SAMPLE_RATE_HZ = 50.0        # 50 Hz internal polling rate
+IMU_DEADBAND_DPS = 0.25          # Gyro deadband filter to eliminate stationary creep
+IMU_COLLISION_THRESHOLD_G = 1.8  # Horizontal acceleration spike threshold (g) for bump detection
+
