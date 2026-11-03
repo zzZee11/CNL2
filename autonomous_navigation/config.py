@@ -59,10 +59,10 @@ DEFAULT_PLOT_PATH = "autonomous_navigation/navigation_result.png"
 # ARTIFICIAL POTENTIAL FIELD (APF) TUNING
 # ==========================================
 K_ATT = 1.4                   # Attractive force towards current waypoint
-K_REP = 0.35                  # Repulsive force away from ToF obstacles (tuned to prevent spikes)
+K_REP = 0.4                  # Repulsive force away from ToF obstacles (tuned to prevent spikes)
 MAX_REP_FORCE = 1.0           # Saturation clamp on repulsive force to prevent erratic twitches
-SAFE_DIST = 0.22              # Distance (meters) at which obstacles begin repelling robot
-CRITICAL_STOP_DIST = 0.12     # Emergency stop distance (meters) - stops before contact
+SAFE_DIST = 0.35              # Distance (meters) at which obstacles begin repelling robot
+CRITICAL_STOP_DIST = 0.15     # Emergency stop distance (meters) - stops before contact
 CRITICAL_PERSIST_TICKS = 2    # Consecutive cycles (100ms) required to confirm critical emergency hazard
 SENSOR_ANGLES = [
     math.pi / 4.0,            # Left sensor (+45 deg)
