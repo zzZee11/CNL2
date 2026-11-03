@@ -59,7 +59,7 @@ DEFAULT_PLOT_PATH = "autonomous_navigation/navigation_result.png"
 K_ATT = 1.4                   # Attractive force towards current waypoint
 K_REP = 0.35                  # Repulsive force away from ToF obstacles (tuned to prevent spikes)
 MAX_REP_FORCE = 1.0           # Saturation clamp on repulsive force to prevent erratic twitches
-SAFE_DIST = 0.60              # Local APF obstacle repulsion distance (0.45m prevents corridor ping-pong)
+SAFE_DIST = 0.20              # Local APF obstacle repulsion distance (0.45m prevents corridor ping-pong)
 CRITICAL_STOP_DIST = 0.08     # Emergency stop distance (meters)
 SENSOR_ANGLES = [
     math.pi / 4.0,            # Left sensor (+45 deg)
