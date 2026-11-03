@@ -306,7 +306,7 @@ python3 -m autonomous_navigation.main --mock --goal 1.0 1.0 --speed 0.6
 | `ROBOT_CLEARANCE_RADIUS` | `0.22 m` | Circular inflation radius around obstacles |
 | `LOOKAHEAD_DIST_M` | `0.55 m` | Pure Pursuit lookahead distance along path |
 | `GOAL_TOLERANCE_M` | `0.08 m` | Arrival distance tolerance |
-| `MAX_REP_FORCE` | `1.0` | Saturation cap on APF repulsive vector |
+| `MAX_REP_FORCE` | `0.75` | Saturation cap on APF repulsive vector |
 | `MAX_ACCEL_MPS2` | `0.50 m/s²` | Slew-rate linear acceleration limit |
 | `MAX_DECEL_MPS2` | `1.20 m/s²` | Slew-rate linear deceleration limit |
 | `PIVOT_ENTER_RAD` | `0.85 rad` (~49°) | In-place pivot entry threshold |
@@ -314,7 +314,7 @@ python3 -m autonomous_navigation.main --mock --goal 1.0 1.0 --speed 0.6
 | `MAX_PIVOT_SPEED` | `0.25 m/s` | Maximum in-place pivot turning speed |
 | `OBSTACLE_PERSISTENCE`| `10 cycles` | Filter against floor bounce and noise spikes |
 | `OBSTACLE_MAP_MAX_DIST`| `1.00 m` | Global A* occupancy grid obstacle mapping distance |
-| `SAFE_DIST` | `0.45 m` | Local APF obstacle repulsion distance |
+| `SAFE_DIST` | `0.20 m` | Local APF obstacle repulsion distance |
 
 ### Vision Pipeline Constants (`vision/config.py`)
 | Parameter | Value | Description |

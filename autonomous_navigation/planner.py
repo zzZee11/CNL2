@@ -8,6 +8,7 @@ Implemented with zero external dependencies (pure Python math) for maximum porta
 
 import math
 import heapq
+import random
 
 try:
     from .config import (
@@ -161,7 +162,7 @@ def is_path_blocked(waypoints, grid):
     return False
 
 
-def calculate_apf(current_pos, waypoint, tof_readings, current_theta, target_speed):
+def calculate_apf(current_pos, waypoint, tof_readings, current_theta, target_speed, lateral_bias_dir=None):
     """
     Computes resultant force vector from Waypoint Attraction (F_att) and
     real-time Time-of-Flight Repulsion (F_rep).
@@ -195,13 +196,28 @@ def calculate_apf(current_pos, waypoint, tof_readings, current_theta, target_spe
             # Push away from the obstacle angle
             push_angle = current_theta + SENSOR_ANGLES[i] + math.pi
 
-            # For middle/front sensor (angle 0.0), add a lateral deflection bias
+            # For middle/front sensor (angle 0.0), apply a strong lateral deflection bias
             # to break collinear vector cancellation (head-on deadlock)
             if abs(SENSOR_ANGLES[i]) < 0.01:
                 left_d = tof_readings[0] if len(tof_readings) > 0 else SAFE_DIST
                 right_d = tof_readings[2] if len(tof_readings) > 2 else SAFE_DIST
-                # Steer toward whichever side has more clearance
-                bias = -0.35 if left_d >= right_d else +0.35
+
+                # Strong lateral turning bias (0.75 rad ~ 43 deg) to decisively steer around obstacle
+                STRONG_BIAS_RAD = 0.75
+
+                # Check if ONLY the middle sensor detected an obstacle (both side sensors clear)
+                only_middle = (left_d >= SAFE_DIST and right_d >= SAFE_DIST)
+
+                if only_middle and lateral_bias_dir is not None:
+                    # Use persistent random direction (-1.0: Left, +1.0: Right)
+                    bias = lateral_bias_dir * STRONG_BIAS_RAD
+                elif only_middle:
+                    # Randomly pick a direction if only middle detects an obstacle
+                    bias = random.choice([-1.0, 1.0]) * STRONG_BIAS_RAD
+                else:
+                    # Steer toward whichever side has more clearance
+                    bias = -STRONG_BIAS_RAD if left_d >= right_d else +STRONG_BIAS_RAD
+
                 push_angle += bias
 
             f_rep_x += rep_mag * math.cos(push_angle)

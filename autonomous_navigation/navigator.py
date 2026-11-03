@@ -14,6 +14,7 @@ Capabilities:
 
 import time
 import math
+import random
 from typing import List, Tuple, Optional
 
 try:
@@ -64,6 +65,8 @@ class AutonomousNavigator:
         self.last_heading_err = 0.0
         self.last_kinematics_time = 0.0
         self.last_f_total = None
+        self.middle_turn_dir = 1.0
+        self.middle_obstacle_active = False
 
         # Mission logging & trajectory history
         self.last_trajectory: List[Tuple[float, float]] = []
@@ -122,6 +125,7 @@ class AutonomousNavigator:
         self.last_heading_err = 0.0
         self.last_kinematics_time = time.time()
         self.last_f_total = None
+        self.middle_obstacle_active = False
 
         # Telemetry history tracking
         self.last_trajectory = [(0.0, 0.0)]
@@ -269,7 +273,25 @@ class AutonomousNavigator:
                     mission_status = "COLLISION_HALT"
                     break
 
-                f_total = calculate_apf(current_pos, target_wp, tof_readings, cur_theta, effective_speed)
+                # Detect if only middle sensor sees an obstacle head-on (both sides clear)
+                mid_d = tof_readings[1] if len(tof_readings) > 1 else 9.99
+                left_d = tof_readings[0] if len(tof_readings) > 0 else 9.99
+                right_d = tof_readings[2] if len(tof_readings) > 2 else 9.99
+                only_mid_detected = (0.05 < mid_d < SAFE_DIST) and (left_d >= SAFE_DIST) and (right_d >= SAFE_DIST)
+
+                if only_mid_detected:
+                    if not self.middle_obstacle_active:
+                        # Randomly pick turn direction for this obstacle encounter (-1.0: Left, +1.0: Right)
+                        self.middle_turn_dir = random.choice([-1.0, 1.0])
+                        self.middle_obstacle_active = True
+                else:
+                    if mid_d >= SAFE_DIST:
+                        self.middle_obstacle_active = False
+
+                f_total = calculate_apf(
+                    current_pos, target_wp, tof_readings, cur_theta, effective_speed,
+                    lateral_bias_dir=self.middle_turn_dir
+                )
 
                 # Smooth resultant navigation vector with EMA filter to eliminate single-cycle snap
                 if self.last_f_total is not None:
