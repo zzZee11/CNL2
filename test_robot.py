@@ -143,9 +143,13 @@ def move(distance_m, cruise_speed=DEFAULT_CRUISE_MPS):
         2 * math.pi * WHEEL_RADIUS_M
     )
     direction = 1 if distance_m > 0 else -1
+    is_reverse = (direction < 0)
+
+    # In reverse, cap cruise speed to 0.28 m/s for calm, steady tracking
+    effective_cruise = min(0.28, cruise_speed) if is_reverse else cruise_speed
 
     # Limit travel time in case an encoder fails.
-    timeout = max(5.0, abs(distance_m) / max(0.05, cruise_speed) * 3)
+    timeout = max(5.0, abs(distance_m) / max(0.05, effective_cruise) * 3)
     start_time = time.monotonic()
     last_time = start_time
     last_heading_err = 0.0
@@ -156,7 +160,7 @@ def move(distance_m, cruise_speed=DEFAULT_CRUISE_MPS):
     sensor_tag = "IMU" if (imu and imu.is_ready()) else "ENC"
 
     mode_str = f"Active Heading Lock [{sensor_tag}]" if ENABLE_HEADING_LOCK else "Open-Loop"
-    print(f"\nMoving {distance_m:+.2f} m [{mode_str}] (Cruise at {cruise_speed:.2f} m/s)...")
+    print(f"\nMoving {distance_m:+.2f} m [{mode_str}] (Cruise at {effective_cruise:.2f} m/s)...")
 
     try:
         while True:
@@ -185,43 +189,73 @@ def move(distance_m, cruise_speed=DEFAULT_CRUISE_MPS):
 
             # --- 1. DYNAMIC SPEED PROFILE ---
             elapsed = now - start_time
-            if elapsed < PUSH_DURATION_S and remaining_m > 0.04:
-                # Breakaway push to overcome gearbox static friction
-                current_speed = PUSH_SPEED_MPS
-            elif remaining_m < 0.05:
-                # Smooth deceleration for the final 5 cm to prevent overshoot
-                current_speed = max(0.08, cruise_speed * (remaining_m / 0.05))
+            if is_reverse:
+                # Smooth linear acceleration ramp (prevents abrupt shock kick in reverse)
+                ramp_speed = 0.18 + (0.45 * elapsed)
+                current_speed = min(effective_cruise, ramp_speed)
+                if remaining_m < 0.08:
+                    # Smooth deceleration for the final 8 cm
+                    current_speed = max(0.12, current_speed * (remaining_m / 0.08))
             else:
-                # Steady cruising speed
-                current_speed = cruise_speed
+                if elapsed < PUSH_DURATION_S and remaining_m > 0.04:
+                    # Breakaway push to overcome gearbox static friction forward
+                    current_speed = PUSH_SPEED_MPS
+                elif remaining_m < 0.05:
+                    # Smooth deceleration for the final 5 cm to prevent overshoot
+                    current_speed = max(0.08, cruise_speed * (remaining_m / 0.05))
+                else:
+                    # Steady cruising speed
+                    current_speed = cruise_speed
 
             # --- 2. ACTIVE HEADING LOCK (Differential Steering Correction) ---
             if imu and imu.is_ready():
                 # Gyroscope spatial heading error (immune to wheel slip)
                 raw_err = imu.get_heading_rad() - start_heading_rad
                 heading_err = math.atan2(math.sin(raw_err), math.cos(raw_err))
-                d_err = imu.get_yaw_rate_rad_s()
+                yaw_rate = imu.get_yaw_rate_rad_s()
+                # Rate damping MUST oppose angular velocity (- yaw_rate)
+                d_err_term = -yaw_rate
             else:
-                # Wheel-encoder disparity fallback
-                heading_err = (d_right - d_left) / WHEEL_BASE_M
+                # Wheel-encoder disparity fallback (direction-aware)
+                if is_reverse:
+                    heading_err = (d_left - d_right) / WHEEL_BASE_M
+                else:
+                    heading_err = (d_right - d_left) / WHEEL_BASE_M
                 dt = max(0.001, now - last_time)
                 d_err = (heading_err - last_heading_err) / dt
                 last_heading_err = heading_err
+                d_err_term = d_err
 
             last_time = now
 
             if ENABLE_HEADING_LOCK:
-                # Deadband filter: within +/- 1.5 degrees, do not twitch wheels
-                if abs(heading_err) < HEADING_DEADBAND_RAD:
+                if is_reverse:
+                    # Reverse tuning: gentle steering gain, wide deadband, low max offset
+                    # Keeps BOTH wheels spinning backwards without alternating/stalling
+                    kp = 0.25
+                    kd = 0.10
+                    deadband = math.radians(2.2)  # 2.2° deadband
+                    max_steer = 0.04              # Max 0.04 m/s offset (neither wheel stalls)
+                    alpha = 0.15                  # Heavy EMA smoothing (85% history / 15% new)
+                else:
+                    # Forward tuning
+                    kp = KP_HEADING
+                    kd = KD_HEADING
+                    deadband = HEADING_DEADBAND_RAD
+                    max_steer = MAX_STEER_CORRECTION_MPS
+                    alpha = 0.30
+
+                # Deadband filter: do not twitch wheels for tiny deviations
+                if abs(heading_err) < deadband:
                     v_steer_target = 0.0
                 else:
                     # Subtract deadband to start correction smoothly from zero
-                    effective_err = heading_err - math.copysign(HEADING_DEADBAND_RAD, heading_err)
-                    v_steer_target = (KP_HEADING * effective_err) + (KD_HEADING * d_err)
-                    v_steer_target = max(-MAX_STEER_CORRECTION_MPS, min(MAX_STEER_CORRECTION_MPS, v_steer_target))
+                    effective_err = heading_err - math.copysign(deadband, heading_err)
+                    v_steer_target = (kp * effective_err) + (kd * d_err_term)
+                    v_steer_target = max(-max_steer, min(max_steer, v_steer_target))
 
                 # Exponential moving average filter for silky smooth, jitter-free correction
-                v_steer_smooth = (0.70 * v_steer_smooth) + (0.30 * v_steer_target)
+                v_steer_smooth = ((1.0 - alpha) * v_steer_smooth) + (alpha * v_steer_target)
             else:
                 v_steer_smooth = 0.0
 
