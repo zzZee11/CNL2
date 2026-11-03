@@ -29,7 +29,7 @@ try:
         DEFAULT_PLOT_PATH
     )
     from .planner import (
-        create_empty_grid, mark_obstacle,
+        create_empty_grid, mark_obstacle, unmark_obstacle,
         astar_grid, is_path_blocked,
         calculate_apf, calculate_kinematics,
         world_to_grid
@@ -48,7 +48,7 @@ except ImportError:
         DEFAULT_PLOT_PATH
     )
     from planner import (
-        create_empty_grid, mark_obstacle,
+        create_empty_grid, mark_obstacle, unmark_obstacle,
         astar_grid, is_path_blocked,
         calculate_apf, calculate_kinematics,
         world_to_grid
@@ -95,6 +95,14 @@ class AutonomousNavigator:
         self.last_obstacles: List[Tuple[float, float]] = []
         self.last_planned_path: List[Tuple[float, float]] = []
         self.last_plot_path: Optional[str] = None
+
+    def clear_obstacles(self):
+        """Clears all mapped obstacles from occupancy grid (useful to reset after false detections)."""
+        self.grid = create_empty_grid()
+        self.last_obstacles = []
+        self.candidate_obstacles = []
+        self.critical_hazard_ticks = 0
+        print("[Nav] All mapped obstacles cleared from occupancy grid.")
 
     def navigate_to(
         self,
@@ -224,21 +232,28 @@ class AutonomousNavigator:
                     self.critical_hazard_ticks = 0
 
                 if self.critical_hazard_ticks >= CRITICAL_PERSIST_TICKS:
-                    print(f"\n[Nav] EMERGENCY BRAKE: Confirmed critical hazard ({min(tof_readings):.2f}m < {CRITICAL_STOP_DIST:.2f}m)! Halting.")
+                    print(f"\n[Nav] EMERGENCY BRAKE: Hazard detected ({min(tof_readings):.2f}m < {CRITICAL_STOP_DIST:.2f}m)! Halting.")
                     self.comm.stop()
-                    time.sleep(0.10)
+                    time.sleep(0.12)
                     self.critical_hazard_ticks = 0
 
-                    # Mark all close confirmed obstacles into grid
+                    # Stationary verification: Ignore false obstacle detections (dust, transient glare, floor tilt)
                     fresh_tof = self.sensors.get_distances()
-                    for i in range(3):
-                        d = fresh_tof[i]
-                        if TOF_MIN_VALID_M <= d < (CRITICAL_STOP_DIST + 0.05):
-                            sensor_angle = cur_theta + SENSOR_ANGLES[i]
-                            obs_x = cur_x + (d * math.cos(sensor_angle))
-                            obs_y = cur_y + (d * math.sin(sensor_angle))
-                            mark_obstacle(self.grid, obs_x, obs_y)
-                            self.last_obstacles.append((obs_x, obs_y))
+                    verified_hazards = [
+                        (i, d) for i, d in enumerate(fresh_tof)
+                        if TOF_MIN_VALID_M <= d < (CRITICAL_STOP_DIST + 0.05)
+                    ]
+                    if not verified_hazards:
+                        print("[Nav] False obstacle detection ignored (reading cleared upon stationary verification). Resuming route.")
+                        continue
+
+                    # Mark all close confirmed obstacles into grid
+                    for i, d in verified_hazards:
+                        sensor_angle = cur_theta + SENSOR_ANGLES[i]
+                        obs_x = cur_x + (d * math.cos(sensor_angle))
+                        obs_y = cur_y + (d * math.sin(sensor_angle))
+                        mark_obstacle(self.grid, obs_x, obs_y)
+                        self.last_obstacles.append((obs_x, obs_y))
 
                     # Replan path around hazard
                     new_path = astar_grid(current_pos, goal_pos, self.grid)
@@ -611,8 +626,18 @@ class AutonomousNavigator:
                     critical_hazard_ticks = 0
 
                 if critical_hazard_ticks >= CRITICAL_PERSIST_TICKS:
-                    print(f"\n[Nav] [{label}] EMERGENCY BRAKE: Confirmed critical obstacle on path ({min(tof_readings):.2f}m < {CRITICAL_STOP_DIST:.2f}m)! Halting.")
+                    print(f"\n[Nav] [{label}] EMERGENCY BRAKE: Hazard detected ({min(tof_readings):.2f}m < {CRITICAL_STOP_DIST:.2f}m)! Halting.")
                     self.comm.stop()
+                    time.sleep(0.12)
+                    critical_hazard_ticks = 0
+
+                    # Stationary verification: Ignore false obstacle detections
+                    fresh_tof = self.sensors.get_distances()
+                    if not any(TOF_MIN_VALID_M <= d < (CRITICAL_STOP_DIST + 0.05) for d in fresh_tof):
+                        print(f"[Nav] [{label}] False obstacle detection ignored (reading cleared upon verification). Resuming path.")
+                        continue
+
+                    print(f"[Nav] [{label}] Path blocked by confirmed stationary obstacle.")
                     mission_status = "BLOCKED"
                     break
 

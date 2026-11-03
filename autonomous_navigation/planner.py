@@ -80,6 +80,19 @@ def mark_obstacle(grid, world_x, world_y):
                     grid[nx][ny] = 1
 
 
+def unmark_obstacle(grid, world_x, world_y):
+    """Clears an obstacle and its clearance halo from the grid (used to ignore false detections)."""
+    gx, gy = world_to_grid(world_x, world_y)
+
+    for i in range(-CELLS_TO_INFLATE, CELLS_TO_INFLATE + 1):
+        for j in range(-CELLS_TO_INFLATE, CELLS_TO_INFLATE + 1):
+            nx, ny = gx + i, gy + j
+            # Protect outer boundary walls (index 0 and DIM-1)
+            if 1 <= nx < GRID_DIM_X - 1 and 1 <= ny < GRID_DIM_Y - 1:
+                if math.hypot(i, j) <= CELLS_TO_INFLATE:
+                    grid[nx][ny] = 0
+
+
 def astar_grid(start_world, goal_world, grid):
     """
     Finds the shortest collision-free path on the occupancy grid using A*.

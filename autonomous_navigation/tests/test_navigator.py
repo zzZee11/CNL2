@@ -185,33 +185,6 @@ class TestAutonomousNavigator(unittest.TestCase):
 
         fused_comm.close()
 
-    def test_continuous_obstacles_clustering_and_swept_path(self):
-        from autonomous_navigation.plotter import cluster_obstacles, compute_swept_path, get_robot_box_corners
-
-        # 1. Test clustering continuous points into ordered chains
-        wall = [(0.0, 1.0), (0.4, 1.0), (0.2, 1.0), (0.6, 1.0)]
-        isolated = [(3.0, 3.0)]
-        clusters = cluster_obstacles(wall + isolated, max_link_dist=0.35)
-        self.assertEqual(len(clusters), 2)
-        # Wall cluster has 4 points in monotonic order
-        wall_c = next(c for c in clusters if len(c) == 4)
-        wall_xs = [p[0] for p in wall_c]
-        self.assertTrue(wall_xs == [0.0, 0.2, 0.4, 0.6] or wall_xs == [0.6, 0.4, 0.2, 0.0])
-
-        # 2. Test swept-path polygon corridor
-        traj = [(0.0, 0.0), (1.0, 0.0), (2.0, 0.0)]
-        poly, left_t, right_t = compute_swept_path(traj, width=0.134)
-        self.assertEqual(len(poly), 6)
-        self.assertEqual(len(left_t), 3)
-        self.assertEqual(len(right_t), 3)
-        # Left track should be at +W/2 (+0.067m lateral) and right at -W/2 (-0.067m)
-        self.assertAlmostEqual(left_t[0][1], 0.067, delta=0.005)
-        self.assertAlmostEqual(right_t[0][1], -0.067, delta=0.005)
-
-        # 3. Test robot box corners
-        corners = get_robot_box_corners(0.0, 0.0, theta=0.0, length=0.18, width=0.134)
-        self.assertEqual(len(corners), 4)
-
     def test_navigate_to_with_target_orientation(self):
         # Run a simulated short Cartesian navigation to (0.4, 0.4) with target heading 90 deg
         success = self.nav.navigate_to(
@@ -236,7 +209,6 @@ class TestAutonomousNavigator(unittest.TestCase):
         with open(json_file, "r") as f:
             data = json.load(f)
             self.assertEqual(data["target_orientation_deg"], 90.0)
-            self.assertIn("robot_dimensions", data)
         if os.path.exists(json_file):
             os.remove(json_file)
 

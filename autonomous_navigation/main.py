@@ -298,6 +298,10 @@ def run_interactive(nav, sensors, comm, default_plot_path=DEFAULT_PLOT_PATH):
             print("[Nav] Robot halted.")
             continue
 
+        if cmd_lower in ("clear", "reset-map", "clear-obstacles"):
+            nav.clear_obstacles()
+            continue
+
         if cmd_lower in ("sensors", "tof"):
             d = sensors.get_distances()
             print(f"[Sensors] Left: {d[0]:.2f}m | Middle: {d[1]:.2f}m | Right: {d[2]:.2f}m")

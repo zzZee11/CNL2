@@ -96,8 +96,6 @@ OBSTACLE_MAP_MAX_DIST_M = 0.70 # Focus mapping on clean near-field (<=70cm) to p
 OBSTACLE_PERSISTENCE_COUNT = 5 # Number of spatial consensus hits required to confirm a real obstacle
 OBSTACLE_CONFIRM_RADIUS_M = 0.12 # World-frame clustering radius (12cm) for spatial consensus
 MIN_OBSTACLE_SPACING_M = 0.20  # Minimum 20 cm spacing to prevent duplicate dots along the same wall
-OBSTACLE_CHAIN_MAX_DIST_M = 0.35 # Max distance to link obstacle points into continuous barriers
-
 
 # ==========================================
 # TIME-OF-FLIGHT (VL53L0X) HARDWARE PINS (Pi BCM)
