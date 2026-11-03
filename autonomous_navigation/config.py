@@ -67,13 +67,15 @@ SENSOR_ANGLES = [
     -math.pi / 4.0            # Right sensor (-45 deg)
 ]
 
-# In-Place Pivot Heading Thresholds (with Hysteresis)
+# In-Place Pivot Heading Thresholds & Speed Limits (Calm Turning)
 PIVOT_ENTER_RAD = 0.85        # ~49 deg: enter in-place pivot if heading error exceeds this
 PIVOT_EXIT_RAD = 0.35         # ~20 deg: exit in-place pivot only when aligned within this
+MAX_PIVOT_SPEED = 0.18        # Capped pivot speed (m/s) for calm, controlled turns (reduced from 0.26)
+MIN_PIVOT_SPEED = 0.10        # Minimum pivot speed (m/s) to overcome floor friction
 
 # Heading Lock & Course Correction (PD Control)
-KP_HEADING_NAV = 2.2          # Proportional angular steering gain
-KD_HEADING_NAV = 0.14         # Derivative rate damping gain to prevent heading overshoots
+KP_HEADING_NAV = 1.6          # Proportional angular steering gain (softened from 2.2 for gentler steering)
+KD_HEADING_NAV = 0.12         # Derivative rate damping gain to prevent heading overshoots
 HEADING_DEADBAND_RAD = 0.035  # ~2.0 deg deadband: drive straight when aligned
 
 # Goal Arrival Precision & Pure Pursuit Lookahead
@@ -96,7 +98,8 @@ ADDR_MIDDLE = 0x31            # Readdressed I2C address
 ADDR_RIGHT = 0x32             # Readdressed I2C address
 
 TOF_MAX_RANGE_M = 2.0         # Maximum reliable ToF mapping distance (meters)
-TOF_SAMPLE_INTERVAL_S = 0.05  # 20 Hz ToF polling rate
+TOF_TIMING_BUDGET_US = 20000  # 20 ms timing budget (High-Speed mode: 20000 us vs default 33000 us)
+TOF_SAMPLE_INTERVAL_S = 0.02  # 50 Hz target ToF polling loop rate (increased from 20 Hz / 0.05s)
 
 # ==========================================
 # INERTIAL MEASUREMENT UNIT (MPU-6050)

@@ -14,13 +14,15 @@ try:
     from .config import (
         XSHUT_LEFT, XSHUT_MIDDLE, XSHUT_RIGHT,
         ADDR_LEFT, ADDR_MIDDLE, ADDR_RIGHT,
-        TOF_SAMPLE_INTERVAL_S, TOF_MAX_RANGE_M
+        TOF_SAMPLE_INTERVAL_S, TOF_MAX_RANGE_M,
+        TOF_TIMING_BUDGET_US
     )
 except ImportError:
     from config import (
         XSHUT_LEFT, XSHUT_MIDDLE, XSHUT_RIGHT,
         ADDR_LEFT, ADDR_MIDDLE, ADDR_RIGHT,
-        TOF_SAMPLE_INTERVAL_S, TOF_MAX_RANGE_M
+        TOF_SAMPLE_INTERVAL_S, TOF_MAX_RANGE_M,
+        TOF_TIMING_BUDGET_US
     )
 
 class DistanceSensorManager:
@@ -82,8 +84,8 @@ class DistanceSensorManager:
                 time.sleep(0.08)
                 sensor = adafruit_vl53l0x.VL53L0X(self.i2c)
                 sensor.set_address(address)
-                # Adjust measurement timing budget if needed (default is 33ms)
-                sensor.measurement_timing_budget = 33000
+                # High-speed timing budget (20ms) for high frequency obstacle detection
+                sensor.measurement_timing_budget = TOF_TIMING_BUDGET_US
                 self.sensors.append(sensor)
                 print(f"[Sensors] {name} ToF initialized at 0x{address:02X}")
 
@@ -116,6 +118,7 @@ class DistanceSensorManager:
 
     def _poll_loop(self):
         while self.running:
+            t0 = time.time()
             if self.use_mock:
                 time.sleep(TOF_SAMPLE_INTERVAL_S)
                 continue
@@ -137,7 +140,10 @@ class DistanceSensorManager:
                 self.distances = readings
                 self.last_update = time.time()
 
-            time.sleep(TOF_SAMPLE_INTERVAL_S)
+            elapsed = time.time() - t0
+            sleep_time = TOF_SAMPLE_INTERVAL_S - elapsed
+            if sleep_time > 0:
+                time.sleep(sleep_time)
 
     def close(self):
         """Powers down sensors and releases GPIO."""

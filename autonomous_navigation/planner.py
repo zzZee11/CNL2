@@ -17,7 +17,8 @@ try:
         K_ATT, K_REP, MAX_REP_FORCE, SAFE_DIST, SENSOR_ANGLES,
         PIVOT_ENTER_RAD, PIVOT_EXIT_RAD,
         KP_HEADING_NAV, KD_HEADING_NAV, HEADING_DEADBAND_RAD,
-        WHEEL_BASE_M, MAX_ALLOWED_SPEED, MIN_MANEUVER_SPEED
+        WHEEL_BASE_M, MAX_ALLOWED_SPEED, MIN_MANEUVER_SPEED,
+        MAX_PIVOT_SPEED, MIN_PIVOT_SPEED
     )
 except ImportError:
     from config import (
@@ -27,7 +28,8 @@ except ImportError:
         K_ATT, K_REP, MAX_REP_FORCE, SAFE_DIST, SENSOR_ANGLES,
         PIVOT_ENTER_RAD, PIVOT_EXIT_RAD,
         KP_HEADING_NAV, KD_HEADING_NAV, HEADING_DEADBAND_RAD,
-        WHEEL_BASE_M, MAX_ALLOWED_SPEED, MIN_MANEUVER_SPEED
+        WHEEL_BASE_M, MAX_ALLOWED_SPEED, MIN_MANEUVER_SPEED,
+        MAX_PIVOT_SPEED, MIN_PIVOT_SPEED
     )
 
 GRID_DIM_X = int(GRID_SIZE_X / GRID_RES)
@@ -227,7 +229,7 @@ def calculate_kinematics(f_total, current_theta, target_speed, is_pivoting=False
         # Smooth pivot speed easing: slows down gently as robot aligns to exit angle
         err_mag = abs(heading_error)
         norm_err = min(1.0, max(0.0, (err_mag - PIVOT_EXIT_RAD) / max(0.01, PIVOT_ENTER_RAD - PIVOT_EXIT_RAD)))
-        pivot_speed = MIN_MANEUVER_SPEED + (0.26 - MIN_MANEUVER_SPEED) * (norm_err ** 1.2)
+        pivot_speed = MIN_PIVOT_SPEED + (MAX_PIVOT_SPEED - MIN_PIVOT_SPEED) * (norm_err ** 1.2)
         if heading_error > 0:
             # Turn Left: Left wheel backward, Right wheel forward
             return -pivot_speed, +pivot_speed
