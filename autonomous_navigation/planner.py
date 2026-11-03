@@ -194,6 +194,16 @@ def calculate_apf(current_pos, waypoint, tof_readings, current_theta, target_spe
 
             # Push away from the obstacle angle
             push_angle = current_theta + SENSOR_ANGLES[i] + math.pi
+
+            # For middle/front sensor (angle 0.0), add a lateral deflection bias
+            # to break collinear vector cancellation (head-on deadlock)
+            if abs(SENSOR_ANGLES[i]) < 0.01:
+                left_d = tof_readings[0] if len(tof_readings) > 0 else SAFE_DIST
+                right_d = tof_readings[2] if len(tof_readings) > 2 else SAFE_DIST
+                # Steer toward whichever side has more clearance
+                bias = -0.35 if left_d >= right_d else +0.35
+                push_angle += bias
+
             f_rep_x += rep_mag * math.cos(push_angle)
             f_rep_y += rep_mag * math.sin(push_angle)
 
@@ -202,12 +212,12 @@ def calculate_apf(current_pos, waypoint, tof_readings, current_theta, target_spe
     return (total_fx, total_fy)
 
 
-def calculate_kinematics(f_total, current_theta, target_speed, is_pivoting=False, d_heading_error=0.0, yaw_rate=None):
+def calculate_kinematics(f_total, current_theta, target_speed, is_pivoting=False, d_heading_error=0.0, yaw_rate=None, allow_pivot=True):
     """
     Converts resultant navigation force vector into differential-drive
     wheel speeds (v_left, v_right) in meters per second.
     Includes in-place pivot with hysteresis and active PD heading damping:
-      - Enter pivot when |heading_error| > PIVOT_ENTER_RAD (~49°)
+      - Enter pivot when |heading_error| > PIVOT_ENTER_RAD (~49°) and allow_pivot is True
       - Exit pivot only when |heading_error| < PIVOT_EXIT_RAD (~20°)
       - PD course correction with direct gyro yaw-rate damping when driving forward
     """
@@ -223,7 +233,10 @@ def calculate_kinematics(f_total, current_theta, target_speed, is_pivoting=False
     )
 
     # 1. Hysteresis pivot check: prevents hunting oscillation at boundary
-    should_pivot = (abs(heading_error) > PIVOT_ENTER_RAD) or (is_pivoting and abs(heading_error) > PIVOT_EXIT_RAD)
+    # In-place pivot only when explicitly allowed (e.g. sharp waypoint turns with no close obstacles)
+    should_pivot = allow_pivot and (
+        (abs(heading_error) > PIVOT_ENTER_RAD) or (is_pivoting and abs(heading_error) > PIVOT_EXIT_RAD)
+    )
 
     if should_pivot:
         # Smooth pivot speed easing: slows down gently as robot aligns to exit angle

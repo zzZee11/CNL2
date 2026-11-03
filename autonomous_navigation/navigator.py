@@ -19,7 +19,7 @@ from typing import List, Tuple, Optional
 try:
     from .config import (
         DEFAULT_SPEED, SENSOR_ANGLES,
-        CRITICAL_STOP_DIST, TOF_MAX_RANGE_M,
+        SAFE_DIST, CRITICAL_STOP_DIST, TOF_MAX_RANGE_M,
         OBSTACLE_PERSISTENCE_COUNT, OBSTACLE_MAP_MAX_DIST_M,
         GOAL_TOLERANCE_M, LOOKAHEAD_DIST_M,
         DEFAULT_PLOT_PATH
@@ -34,7 +34,7 @@ try:
 except ImportError:
     from config import (
         DEFAULT_SPEED, SENSOR_ANGLES,
-        CRITICAL_STOP_DIST, TOF_MAX_RANGE_M,
+        SAFE_DIST, CRITICAL_STOP_DIST, TOF_MAX_RANGE_M,
         OBSTACLE_PERSISTENCE_COUNT, OBSTACLE_MAP_MAX_DIST_M,
         GOAL_TOLERANCE_M, LOOKAHEAD_DIST_M,
         DEFAULT_PLOT_PATH
@@ -63,6 +63,7 @@ class AutonomousNavigator:
         # Heading error tracking for PD course-correction rate damping
         self.last_heading_err = 0.0
         self.last_kinematics_time = 0.0
+        self.last_f_total = None
 
         # Mission logging & trajectory history
         self.last_trajectory: List[Tuple[float, float]] = []
@@ -120,6 +121,7 @@ class AutonomousNavigator:
         self.is_pivoting = False
         self.last_heading_err = 0.0
         self.last_kinematics_time = time.time()
+        self.last_f_total = None
 
         # Telemetry history tracking
         self.last_trajectory = [(0.0, 0.0)]
@@ -204,13 +206,13 @@ class AutonomousNavigator:
                     d = tof_readings[i]
                     # Filter out floor reflections (<0.06m) and distant noise (>OBSTACLE_MAP_MAX_DIST_M)
                     if 0.06 < d < OBSTACLE_MAP_MAX_DIST_M:
-                        if abs(d - self.last_sensor_dists[i]) < 0.25:
+                        if abs(d - self.last_sensor_dists[i]) < 0.35:
                             self.sensor_hit_counts[i] += 1
                         else:
-                            self.sensor_hit_counts[i] = 1
+                            self.sensor_hit_counts[i] = max(1, self.sensor_hit_counts[i] - 1)
                         self.last_sensor_dists[i] = d
 
-                        # Only map obstacle into A* grid if detected persistently (>= 2 cycles)
+                        # Only map obstacle into A* grid if detected persistently (>= OBSTACLE_PERSISTENCE_COUNT)
                         if self.sensor_hit_counts[i] >= OBSTACLE_PERSISTENCE_COUNT:
                             sensor_angle = cur_theta + SENSOR_ANGLES[i]
                             obs_x = cur_x + (d * math.cos(sensor_angle))
@@ -222,7 +224,8 @@ class AutonomousNavigator:
                                 self.last_obstacles.append((obs_x, obs_y))
                                 map_changed = True
                     else:
-                        self.sensor_hit_counts[i] = 0
+                        # Leaky integrator: decrement counter on sensor miss instead of hard reset to zero
+                        self.sensor_hit_counts[i] = max(0, self.sensor_hit_counts[i] - 1)
                         self.last_sensor_dists[i] = d
 
                 # 5. Dynamic A* Replanning if current route is blocked
@@ -268,6 +271,15 @@ class AutonomousNavigator:
 
                 f_total = calculate_apf(current_pos, target_wp, tof_readings, cur_theta, effective_speed)
 
+                # Smooth resultant navigation vector with EMA filter to eliminate single-cycle snap
+                if self.last_f_total is not None:
+                    alpha_vec = 0.60
+                    f_total = (
+                        (alpha_vec * f_total[0]) + ((1.0 - alpha_vec) * self.last_f_total[0]),
+                        (alpha_vec * f_total[1]) + ((1.0 - alpha_vec) * self.last_f_total[1])
+                    )
+                self.last_f_total = f_total
+
                 # Derivative rate of heading error for PD damping (Course Correction)
                 desired_theta = math.atan2(f_total[1], f_total[0])
                 current_heading_err = math.atan2(
@@ -282,11 +294,16 @@ class AutonomousNavigator:
                 # Use spatial gyro yaw rate if IMU is healthy, else fallback to numerical derivative
                 yaw_rate = self.comm.imu.get_yaw_rate_rad_s() if (self.comm.imu and self.comm.imu.is_ready()) else None
 
+                # In-place pivoting is prohibited when obstacles are close to prevent sensor sweep thrashing
+                obstacle_close = any(0.05 < d < SAFE_DIST for d in tof_readings)
+                allow_pivot = not obstacle_close
+
                 v_left, v_right = calculate_kinematics(
                     f_total, cur_theta, effective_speed,
                     is_pivoting=self.is_pivoting,
                     d_heading_error=d_heading_err,
-                    yaw_rate=yaw_rate
+                    yaw_rate=yaw_rate,
+                    allow_pivot=allow_pivot
                 )
                 self.is_pivoting = (v_left * v_right < -0.001)
 
