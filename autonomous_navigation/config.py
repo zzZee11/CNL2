@@ -27,14 +27,14 @@ TICKS_PER_REV = 720.0         # Measured encoder counts per single wheel turn (C
 # STARTUP PUSH & DEFAULT SPEEDS
 # ==========================================
 # Breakaway torque boost to overcome L298N & gearbox static friction
-STARTUP_PUSH_SPEED = 0.35     # Gentle breakaway kick demand (m/s)
+STARTUP_PUSH_SPEED = 0.30     # Gentle breakaway kick demand (m/s)
 STARTUP_PUSH_DURATION_S = 0.15 # 150 ms startup kick (forward only)
-DEFAULT_SPEED = 0.35          # Default cruising speed (m/s)
+DEFAULT_SPEED = 0.30          # Default cruising speed (m/s)
 MAX_ALLOWED_SPEED = 0.50       # Safety clamp
 MIN_MANEUVER_SPEED = 0.1     # Minimum turning/creeping speed
 
 # Acceleration & Deceleration Slew-Rate Limits (Smooth Motion)
-MAX_ACCEL_MPS2 = 0.80         # Maximum linear acceleration (m/s^2)
+MAX_ACCEL_MPS2 = 0.50         # Maximum linear acceleration (m/s^2)
 MAX_DECEL_MPS2 = 1.20         # Maximum linear deceleration (m/s^2)
 
 # ==========================================
@@ -70,8 +70,8 @@ SENSOR_ANGLES = [
 # In-Place Pivot Heading Thresholds & Speed Limits (Calm Turning)
 PIVOT_ENTER_RAD = 0.85        # ~49 deg: enter in-place pivot if heading error exceeds this
 PIVOT_EXIT_RAD = 0.35         # ~20 deg: exit in-place pivot only when aligned within this
-MAX_PIVOT_SPEED = 0.18        # Capped pivot speed (m/s) for calm, controlled turns (default: 0.18 m/s)
-MIN_PIVOT_SPEED = 0.10        # Minimum pivot speed (m/s) to overcome floor friction
+MAX_PIVOT_SPEED = 0.25        # Capped pivot speed (m/s) for calm, controlled turns (default: 0.18 m/s)
+MIN_PIVOT_SPEED = 0.15        # Minimum pivot speed (m/s) to overcome floor friction
 
 # Heading Lock & Course Correction (PD Control)
 KP_HEADING_NAV = 1.3          # Proportional angular steering gain (softened for gentle steering)
