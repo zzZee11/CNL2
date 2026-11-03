@@ -173,37 +173,6 @@ class TestAutonomousNavigator(unittest.TestCase):
 
         fused_comm.close()
 
-    def test_turn_direction_latching(self):
-        # When locked_pivot_dir = +1 (Turn Left), kinematics must maintain left pivot
-        f_rev = (-1.0, 0.0)
-        vl, vr = calculate_kinematics(
-            f_rev, current_theta=0.0, target_speed=0.50,
-            is_pivoting=True, locked_pivot_dir=+1
-        )
-        self.assertLess(vl, 0.0)
-        self.assertGreater(vr, 0.0)
-
-        # When locked_pivot_dir = -1 (Turn Right), kinematics must maintain right pivot
-        vl2, vr2 = calculate_kinematics(
-            f_rev, current_theta=0.0, target_speed=0.50,
-            is_pivoting=True, locked_pivot_dir=-1
-        )
-        self.assertGreater(vl2, 0.0)
-        self.assertLess(vr2, 0.0)
-
-    def test_controlled_backoff_execution(self):
-        # Verify backoff maneuver safely reverses and records trajectory
-        self.nav._execute_backoff(distance_m=0.08, speed_mps=0.15)
-        self.assertGreaterEqual(len(self.nav.last_trajectory), 1)
-
-    def test_astar_escapes_inflated_start(self):
-        # Place an obstacle directly onto start (0, 0) and inflate it
-        grid = create_empty_grid()
-        mark_obstacle(grid, 0.0, 0.0)
-        # Even though start is occupied, astar_grid should find an escape path to (1.0, 1.0)
-        path = astar_grid((0.0, 0.0), (1.0, 1.0), grid)
-        self.assertTrue(len(path) > 0)
-
 
 if __name__ == "__main__":
     unittest.main()

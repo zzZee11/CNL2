@@ -312,12 +312,9 @@ python3 -m autonomous_navigation.main --mock --goal 1.0 1.0 --speed 0.6
 | `PIVOT_ENTER_RAD` | `0.85 rad` (~49°) | In-place pivot entry threshold |
 | `PIVOT_EXIT_RAD` | `0.35 rad` (~20°) | In-place pivot exit threshold (hysteresis) |
 | `MAX_PIVOT_SPEED` | `0.25 m/s` | Maximum in-place pivot turning speed |
-| `OBSTACLE_PERSISTENCE`| `10 cycles` | Filter against floor bounce and noise spikes (>0.35m) |
-| `OBSTACLE_PERSISTENCE_CRIT` | `3 cycles` | Fast-track filter for direct close frontal obstacles (<0.35m) |
+| `OBSTACLE_PERSISTENCE`| `10 cycles` | Filter against floor bounce and noise spikes |
 | `OBSTACLE_MAP_MAX_DIST`| `1.00 m` | Global A* occupancy grid obstacle mapping distance |
 | `SAFE_DIST` | `0.45 m` | Local APF obstacle repulsion distance |
-| `CRITICAL_STOP_DIST` | `0.18 m` | Emergency stop distance triggering controlled back-off |
-| `BACKOFF_DIST_M` | `0.10 m` | Controlled reverse back-off distance for turning clearance |
 
 ### Vision Pipeline Constants (`vision/config.py`)
 | Parameter | Value | Description |

@@ -19,9 +19,8 @@ from typing import List, Tuple, Optional
 try:
     from .config import (
         DEFAULT_SPEED, SENSOR_ANGLES,
-        CRITICAL_STOP_DIST, BACKOFF_DIST_M, BACKOFF_SPEED_MPS,
-        OBSTACLE_PERSISTENCE_COUNT, OBSTACLE_PERSISTENCE_CRITICAL,
-        CRITICAL_CLOSE_DIST, OBSTACLE_MAP_MAX_DIST_M,
+        CRITICAL_STOP_DIST, TOF_MAX_RANGE_M,
+        OBSTACLE_PERSISTENCE_COUNT, OBSTACLE_MAP_MAX_DIST_M,
         GOAL_TOLERANCE_M, LOOKAHEAD_DIST_M,
         DEFAULT_PLOT_PATH
     )
@@ -35,9 +34,8 @@ try:
 except ImportError:
     from config import (
         DEFAULT_SPEED, SENSOR_ANGLES,
-        CRITICAL_STOP_DIST, BACKOFF_DIST_M, BACKOFF_SPEED_MPS,
-        OBSTACLE_PERSISTENCE_COUNT, OBSTACLE_PERSISTENCE_CRITICAL,
-        CRITICAL_CLOSE_DIST, OBSTACLE_MAP_MAX_DIST_M,
+        CRITICAL_STOP_DIST, TOF_MAX_RANGE_M,
+        OBSTACLE_PERSISTENCE_COUNT, OBSTACLE_MAP_MAX_DIST_M,
         GOAL_TOLERANCE_M, LOOKAHEAD_DIST_M,
         DEFAULT_PLOT_PATH
     )
@@ -61,7 +59,6 @@ class AutonomousNavigator:
         self.sensor_hit_counts = [0, 0, 0]
         self.last_sensor_dists = [9.99, 9.99, 9.99]
         self.is_pivoting = False
-        self.locked_pivot_dir = 0
 
         # Heading error tracking for PD course-correction rate damping
         self.last_heading_err = 0.0
@@ -72,49 +69,6 @@ class AutonomousNavigator:
         self.last_obstacles: List[Tuple[float, float]] = []
         self.last_planned_path: List[Tuple[float, float]] = []
         self.last_plot_path: Optional[str] = None
-
-    def _execute_backoff(self, distance_m: float = BACKOFF_DIST_M, speed_mps: float = BACKOFF_SPEED_MPS):
-        """
-        Executes a controlled reverse back-off with active heading hold to create
-        turning clearance when blocked by a hazard directly in front.
-        """
-        print(f"[Nav] Initiating controlled back-off ({distance_m*100:.0f} cm at {speed_mps:.2f} m/s)...")
-        start_x, start_y, start_theta, _ = self.comm.get_pose()
-        target_heading = start_theta
-        t_start = time.time()
-        timeout = max(1.5, (distance_m / max(0.05, speed_mps)) * 2.5)
-
-        try:
-            while not self.stop_requested:
-                now = time.time()
-                if now - t_start > timeout:
-                    break
-
-                cur_x, cur_y, cur_theta, _ = self.comm.get_pose()
-                dist_moved = math.hypot(cur_x - start_x, cur_y - start_y)
-                if dist_moved >= distance_m:
-                    break
-
-                # Invariant differential steering to maintain straight heading in reverse
-                h_err = math.atan2(
-                    math.sin(target_heading - cur_theta),
-                    math.cos(target_heading - cur_theta)
-                )
-                v_steer = max(-0.06, min(0.06, 0.40 * h_err))
-                base_rev = -speed_mps
-                cmd_l = base_rev + v_steer
-                cmd_r = base_rev - v_steer
-
-                self.comm.set_speeds(cmd_l, cmd_r)
-                time.sleep(0.04)
-        finally:
-            self.comm.stop()
-            time.sleep(0.10)
-
-        end_x, end_y, _, _ = self.comm.get_pose()
-        actual_back = math.hypot(end_x - start_x, end_y - start_y)
-        self.last_trajectory.append((end_x, end_y))
-        print(f"[Nav] Back-off complete: Reversed {actual_back*100:.1f} cm. Re-aligning.")
 
     def navigate_to(
         self,
@@ -164,7 +118,6 @@ class AutonomousNavigator:
         self.sensor_hit_counts = [0, 0, 0]
         self.last_sensor_dists = [9.99, 9.99, 9.99]
         self.is_pivoting = False
-        self.locked_pivot_dir = 0
         self.last_heading_err = 0.0
         self.last_kinematics_time = time.time()
 
@@ -219,12 +172,12 @@ class AutonomousNavigator:
                 # 2. Read live ToF distance sensors [Left, Middle, Right]
                 tof_readings = self.sensors.get_distances()
 
-                # 3. Emergency brake and controlled back-off if an obstacle appears critically close (< CRITICAL_STOP_DIST)
+                # 3. Emergency brake if an obstacle suddenly appears critically close (< 0.18m)
                 if any(0.02 < d < CRITICAL_STOP_DIST for d in tof_readings):
-                    print(f"[Nav] EMERGENCY: Critical hazard detected (< {CRITICAL_STOP_DIST*100:.0f} cm)! Halting and backing off.")
+                    print(f"[Nav] EMERGENCY BRAKE: Critical hazard detected! Halting.")
                     self.comm.stop()
-                    time.sleep(0.08)
-                    # Mark all close obstacles into grid immediately
+                    time.sleep(0.12)
+                    # Mark all close obstacles into grid
                     for i in range(3):
                         d = tof_readings[i]
                         if 0.02 < d < CRITICAL_STOP_DIST:
@@ -234,14 +187,7 @@ class AutonomousNavigator:
                             mark_obstacle(self.grid, obs_x, obs_y)
                             self.last_obstacles.append((obs_x, obs_y))
 
-                    # Controlled reverse back-off to gain turning clearance
-                    self._execute_backoff(distance_m=BACKOFF_DIST_M, speed_mps=BACKOFF_SPEED_MPS)
-                    cur_x, cur_y, cur_theta, total_dist = self.comm.get_pose()
-                    current_pos = (cur_x, cur_y)
-                    self.is_pivoting = False
-                    self.locked_pivot_dir = 0
-
-                    # Replan path around hazard from new backed-off position
+                    # Replan path around hazard
                     new_path = astar_grid(current_pos, goal_pos, self.grid)
                     if not new_path:
                         print("[Nav] PATH BLOCKED: No route around obstacle!")
@@ -264,10 +210,8 @@ class AutonomousNavigator:
                             self.sensor_hit_counts[i] = 1
                         self.last_sensor_dists[i] = d
 
-                        # Fast-track direct close hazards (< CRITICAL_CLOSE_DIST): 3 cycles
-                        # Denser filter for peripheral/distant noise (> CRITICAL_CLOSE_DIST): 10 cycles
-                        required_hits = OBSTACLE_PERSISTENCE_CRITICAL if d < CRITICAL_CLOSE_DIST else OBSTACLE_PERSISTENCE_COUNT
-                        if self.sensor_hit_counts[i] >= required_hits:
+                        # Only map obstacle into A* grid if detected persistently (>= 2 cycles)
+                        if self.sensor_hit_counts[i] >= OBSTACLE_PERSISTENCE_COUNT:
                             sensor_angle = cur_theta + SENSOR_ANGLES[i]
                             obs_x = cur_x + (d * math.cos(sensor_angle))
                             obs_y = cur_y + (d * math.sin(sensor_angle))
@@ -342,15 +286,9 @@ class AutonomousNavigator:
                     f_total, cur_theta, effective_speed,
                     is_pivoting=self.is_pivoting,
                     d_heading_error=d_heading_err,
-                    yaw_rate=yaw_rate,
-                    locked_pivot_dir=self.locked_pivot_dir
+                    yaw_rate=yaw_rate
                 )
                 self.is_pivoting = (v_left * v_right < -0.001)
-                if self.is_pivoting:
-                    if self.locked_pivot_dir == 0:
-                        self.locked_pivot_dir = +1 if v_right > v_left else -1
-                else:
-                    self.locked_pivot_dir = 0
 
                 # Send commands to ESP32
                 self.comm.set_speeds(v_left, v_right)
