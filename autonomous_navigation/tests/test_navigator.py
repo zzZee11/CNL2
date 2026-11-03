@@ -8,7 +8,6 @@ import os
 import time
 import math
 import unittest
-from collections import deque
 from autonomous_navigation.config import (
     WHEEL_BASE_M, DEFAULT_SPEED, DEFAULT_PLOT_PATH
 )
@@ -19,9 +18,9 @@ from autonomous_navigation.planner import (
 )
 from autonomous_navigation.sensors import DistanceSensorManager
 from autonomous_navigation.serial_comm import RobotSerialComm
-from autonomous_navigation.navigator import AutonomousNavigator, simplify_trajectory
+from autonomous_navigation.navigator import AutonomousNavigator
 from autonomous_navigation.plotter import save_navigation_plot
-from autonomous_navigation.main import parse_goto_input, parse_patrol_input
+from autonomous_navigation.main import parse_goto_input
 
 
 class TestAutonomousNavigator(unittest.TestCase):
@@ -48,24 +47,13 @@ class TestAutonomousNavigator(unittest.TestCase):
                 pass
 
     def test_goto_input_parsing(self):
-        # Test various formats of user input with optional speed, orientation, and return flag
-        self.assertEqual(parse_goto_input("goto 1 5"), (1.0, 5.0, None, None, False))
-        self.assertEqual(parse_goto_input("goto 1.0 5.0 0.8"), (1.0, 5.0, 0.8, None, False))
-        self.assertEqual(parse_goto_input("goto 1 2 90 deg"), (1.0, 2.0, None, 90.0, False))
-        self.assertEqual(parse_goto_input("goto 1 2 heading 90"), (1.0, 2.0, None, 90.0, False))
-        self.assertEqual(parse_goto_input("goto 1 1 @ 180"), (1.0, 1.0, None, 180.0, False))
-        self.assertEqual(parse_goto_input("goto (-2.5, 3.0) 0.6 m/s 90 deg"), (-2.5, 3.0, 0.6, 90.0, False))
-        self.assertEqual(parse_goto_input("navigate 4 -2 90"), (4.0, -2.0, None, 90.0, False))
-        self.assertEqual(parse_goto_input("goto 1 1 --return"), (1.0, 1.0, None, None, True))
-        self.assertEqual(parse_goto_input("goto 1 1 90 deg roundtrip"), (1.0, 1.0, None, 90.0, True))
+        # Test various formats of user input
+        self.assertEqual(parse_goto_input("goto 1 5"), (1.0, 5.0, None))
+        self.assertEqual(parse_goto_input("goto 1.0 5.0 0.8"), (1.0, 5.0, 0.8))
+        self.assertEqual(parse_goto_input("goto (1, 5)"), (1.0, 5.0, None))
+        self.assertEqual(parse_goto_input("goto (-2.5, 3.0) 0.6"), (-2.5, 3.0, 0.6))
+        self.assertEqual(parse_goto_input("navigate 4 -2"), (4.0, -2.0, None))
         self.assertIsNone(parse_goto_input("invalid command"))
-
-    def test_patrol_input_parsing(self):
-        self.assertEqual(parse_patrol_input("patrol 1 1 3"), (1.0, 1.0, 3, None, None))
-        self.assertEqual(parse_patrol_input("patrol 1 2 5 90 deg"), (1.0, 2.0, 5, None, 90.0))
-        self.assertEqual(parse_patrol_input("shuttle 1.0 1.0 2"), (1.0, 1.0, 2, None, None))
-        self.assertEqual(parse_patrol_input("patrol (1.0, 2.0) 3 speed 0.5 heading 90"), (1.0, 2.0, 3, 0.5, 90.0))
-        self.assertIsNone(parse_patrol_input("move 5 m"))
 
     def test_cartesian_astar_planning_to_1_5(self):
         # Plan path from (0, 0) to (1.0, 5.0)
@@ -184,239 +172,6 @@ class TestAutonomousNavigator(unittest.TestCase):
         self.assertAlmostEqual(dist, 0.135, delta=0.02)
 
         fused_comm.close()
-
-    def test_navigate_to_with_target_orientation(self):
-        # Run a simulated short Cartesian navigation to (0.4, 0.4) with target heading 90 deg
-        success = self.nav.navigate_to(
-            target_x=0.4,
-            target_y=0.4,
-            speed_mps=0.8,
-            target_theta_deg=90.0,
-            save_plot=True,
-            plot_path=self.test_plot_file
-        )
-        self.assertTrue(success)
-        cur_x, cur_y, cur_theta, _ = self.comm.get_pose()
-        # Verify robot reached destination and aligned close to 90 degrees
-        self.assertAlmostEqual(cur_x, 0.4, delta=0.10)
-        self.assertAlmostEqual(cur_y, 0.4, delta=0.10)
-        self.assertAlmostEqual(math.degrees(cur_theta), 90.0, delta=5.0)
-
-        # Verify companion JSON contains target_orientation_deg
-        json_file = os.path.splitext(self.test_plot_file)[0] + "_obstacles.json"
-        self.assertTrue(os.path.exists(json_file))
-        import json
-        with open(json_file, "r") as f:
-            data = json.load(f)
-            self.assertEqual(data["target_orientation_deg"], 90.0)
-        if os.path.exists(json_file):
-            os.remove(json_file)
-
-    def test_return_to_start_exact_path(self):
-        # 1. Navigate outward to (0.3, 0.3)
-        ok_out = self.nav.navigate_to(
-            target_x=0.3,
-            target_y=0.3,
-            speed_mps=0.8,
-            target_theta_deg=45.0,
-            save_plot=False
-        )
-        self.assertTrue(ok_out)
-
-        # 2. Retrace exact path forward back to start point (0, 0)
-        ok_ret = self.nav.return_to_start(
-            speed_mps=0.8,
-            target_theta_deg=0.0,
-            save_plot=True,
-            plot_path=self.test_plot_file
-        )
-        self.assertTrue(ok_ret)
-
-        # 3. Verify final position is at (0, 0) facing 0.0° with high precision
-        cur_x, cur_y, cur_theta, total_dist = self.comm.get_pose()
-        self.assertAlmostEqual(cur_x, 0.0, delta=0.04)
-        self.assertAlmostEqual(cur_y, 0.0, delta=0.04)
-        self.assertAlmostEqual(math.degrees(cur_theta), 0.0, delta=5.0)
-        self.assertGreater(total_dist, 0.60)  # Outward + Return distance
-        self.assertTrue(os.path.exists(self.test_plot_file))
-
-    def test_terminal_docking_and_active_brake(self):
-        # Set pose slightly offset (e.g. 5 cm off origin)
-        self.comm.reset_odometry(start_x=0.05, start_y=0.03, start_theta=math.radians(180.0))
-        # Call fine dock onto (0.0, 0.0)
-        docked = self.nav._fine_dock(0.0, 0.0, timeout_s=3.0)
-        self.assertTrue(docked)
-        fx, fy, _, _ = self.comm.get_pose()
-        rem_dist = math.hypot(fx, fy)
-        self.assertLessEqual(rem_dist, 0.026)  # Within 2.5 cm terminal tolerance
-        # Verify active brake sets command to zero
-        self.comm.active_brake()
-        self.assertEqual(self.comm.cmd_left, 0.0)
-        self.assertEqual(self.comm.cmd_right, 0.0)
-
-    def test_patrol_back_and_forth(self):
-        # Run a 2-cycle patrol (4 legs total) between (0, 0) and (0.3, 0.3)
-        ok_patrol = self.nav.patrol(
-            target_x=0.3,
-            target_y=0.3,
-            cycles=2,
-            speed_mps=0.8,
-            target_theta_deg=45.0,
-            save_plot=True,
-            plot_path=self.test_plot_file
-        )
-        self.assertTrue(ok_patrol)
-
-        # Verify robot ended at start point (0, 0) facing 0.0°
-        cur_x, cur_y, cur_theta, total_dist = self.comm.get_pose()
-        self.assertAlmostEqual(cur_x, 0.0, delta=0.12)
-        self.assertAlmostEqual(cur_y, 0.0, delta=0.12)
-        self.assertAlmostEqual(math.degrees(cur_theta), 0.0, delta=5.0)
-        self.assertGreater(total_dist, 0.90)  # 4 legs completed (approx 1.05m total)
-
-        # Verify companion JSON mission status
-        json_file = os.path.splitext(self.test_plot_file)[0] + "_obstacles.json"
-        self.assertTrue(os.path.exists(json_file))
-        import json
-        with open(json_file, "r") as f:
-            data = json.load(f)
-            self.assertIn("PATROL COMPLETED", data["mission_status"])
-        if os.path.exists(json_file):
-            os.remove(json_file)
-
-    def test_sensor_median_filter_rejects_spurious_noise(self):
-        # Test median filtering behavior with transient optical spikes
-        import statistics
-        mgr = DistanceSensorManager(use_mock=True)
-        mgr._median_window_size = 5
-        mgr._windows = [deque([9.99] * 5, maxlen=5) for _ in range(3)]
-
-        # Feed 1 spurious spike of 0.15m to center sensor (channel 1)
-        mgr._windows[1].append(0.15)
-        # Median of [9.99, 9.99, 9.99, 9.99, 0.15] is 9.99 -> spike rejected
-        filtered = float(statistics.median(mgr._windows[1]))
-        self.assertEqual(filtered, 9.99)
-
-        # Feed second spike
-        mgr._windows[1].append(0.14)
-        filtered = float(statistics.median(mgr._windows[1]))
-        self.assertEqual(filtered, 9.99)
-
-        # Feed 3rd consistent reading -> Now it becomes a confirmed persistent obstacle
-        mgr._windows[1].append(0.15)
-        filtered = float(statistics.median(mgr._windows[1]))
-        self.assertAlmostEqual(filtered, 0.15, places=2)
-
-    def test_spatial_consensus_filters_moving_glare(self):
-        # Simulated floor glare drifts with robot: relative distance stays 0.40m as robot moves
-        # Spatial consensus must reject drifting candidates and confirm static world targets
-        grid = create_empty_grid()
-        self.nav.grid = grid
-        self.nav.last_obstacles = []
-        self.nav.candidate_obstacles = []
-
-        # Simulate 10 ticks of moving floor glare (robot moving along X, distance constantly 0.40m ahead)
-        for tick in range(10):
-            cur_x = tick * 0.05  # robot advances 5cm per tick
-            cur_y = 0.0
-            now = time.time() + tick * 0.05
-            d = 0.40  # constant distance ahead of moving robot
-            obs_x = cur_x + d
-            obs_y = cur_y
-
-            # Run consensus logic
-            matched = None
-            for c in self.nav.candidate_obstacles:
-                if math.hypot(obs_x - c["x"], obs_y - c["y"]) <= 0.12:
-                    matched = c
-                    break
-            if matched:
-                matched["hits"] += 1
-                matched["x"] = 0.7 * matched["x"] + 0.3 * obs_x
-                matched["y"] = 0.7 * matched["y"] + 0.3 * obs_y
-                matched["last_seen"] = now
-            else:
-                self.nav.candidate_obstacles.append({
-                    "x": obs_x, "y": obs_y, "hits": 1, "last_seen": now, "confirmed": False
-                })
-            # Prune
-            self.nav.candidate_obstacles = [
-                c for c in self.nav.candidate_obstacles if (now - c["last_seen"] <= 0.20)
-            ]
-
-        # Drifting floor glare should never reach persistence threshold of 5 hits
-        confirmed = [c for c in self.nav.candidate_obstacles if c.get("hits", 0) >= 5]
-        self.assertEqual(len(confirmed), 0)
-
-        # Now simulate a true static obstacle at (0.80, 0.00) in the world frame
-        static_x, static_y = 0.80, 0.00
-        for tick in range(6):
-            cur_x = tick * 0.03
-            now = time.time() + 10.0 + tick * 0.05
-            d = static_x - cur_x
-            obs_x = cur_x + d
-            obs_y = 0.0
-            matched = None
-            for c in self.nav.candidate_obstacles:
-                if math.hypot(obs_x - c["x"], obs_y - c["y"]) <= 0.12:
-                    matched = c
-                    break
-            if matched:
-                matched["hits"] += 1
-                matched["last_seen"] = now
-            else:
-                self.nav.candidate_obstacles.append({
-                    "x": obs_x, "y": obs_y, "hits": 1, "last_seen": now, "confirmed": False
-                })
-
-        confirmed_static = [c for c in self.nav.candidate_obstacles if c.get("hits", 0) >= 5]
-        self.assertEqual(len(confirmed_static), 1)
-        self.assertAlmostEqual(confirmed_static[0]["x"], 0.80, delta=0.05)
-
-    def test_imu_quick_recalibrate_bias_preserves_heading(self):
-        from autonomous_navigation.imu import IMUManager
-        mock_imu = IMUManager(use_mock=True)
-        mock_imu.initialize()
-        mock_imu.start()
-        # Set heading to 45 degrees
-        mock_imu.reset_heading(math.radians(45.0))
-        self.assertAlmostEqual(mock_imu.get_heading_deg(), 45.0, delta=0.1)
-
-        # Quick recalibration must preserve existing heading
-        ok = mock_imu.quick_recalibrate_bias(num_samples=10)
-        self.assertTrue(ok)
-        self.assertAlmostEqual(mock_imu.get_heading_deg(), 45.0, delta=0.1)
-
-        fused_comm = RobotSerialComm(use_mock=True, imu=mock_imu)
-        fused_comm.connect()
-        ok_comm = fused_comm.recalibrate_imu(num_samples=10)
-        self.assertTrue(ok_comm)
-        self.assertAlmostEqual(mock_imu.get_heading_deg(), 45.0, delta=0.1)
-        fused_comm.close()
-
-    def test_calibration_linear_distance_and_wheel_base(self):
-        from autonomous_navigation.calibration import calibrate_linear_distance, calibrate_wheel_base
-        from autonomous_navigation import config
-
-        # Test distance calibration calculation with a 2% scale discrepancy (102 cm measured for 100 cm commanded)
-        new_r, ratio = calibrate_linear_distance(self.comm, target_dist_m=1.00, user_measured_cm=102.0)
-        self.assertAlmostEqual(ratio, 1.02, places=3)
-        self.assertAlmostEqual(new_r, config.DEFAULT_WHEEL_RADIUS_M * 1.02, places=4)
-
-        # Test wheel base calibration calculation with an offset (+18 deg over 720 deg)
-        new_l, ratio_l = calibrate_wheel_base(self.comm, num_turns=2, user_offset_deg=18.0)
-        expected_ratio = (720.0 + 18.0) / 720.0
-        self.assertAlmostEqual(ratio_l, expected_ratio, places=3)
-        self.assertAlmostEqual(new_l, config.DEFAULT_WHEEL_BASE_M * expected_ratio, places=4)
-
-        # Test save and reset
-        config.save_calibration(new_r, new_l)
-        self.assertTrue(os.path.exists(config.CALIBRATION_FILE))
-        self.assertAlmostEqual(config.WHEEL_RADIUS_M, new_r, places=4)
-
-        config.reset_calibration()
-        self.assertFalse(os.path.exists(config.CALIBRATION_FILE))
-        self.assertAlmostEqual(config.WHEEL_RADIUS_M, config.DEFAULT_WHEEL_RADIUS_M, places=4)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,0 @@
-"""
-grid_navigation/tests
-"""
-

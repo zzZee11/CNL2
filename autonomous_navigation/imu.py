@@ -262,31 +262,6 @@ class IMUManager:
     def _calibrate(self, num_samples=60):
         return self.calibrate(num_samples=num_samples, quiet=True)
 
-    def quick_recalibrate_bias(self, num_samples=25):
-        """
-        Samples resting Z-axis angular velocity to re-zero gyro drift bias (Solution 4)
-        while strictly preserving the current accumulated yaw heading.
-        """
-        if self.use_mock:
-            return True
-
-        sum_gz = 0.0
-        samples_taken = 0
-        for _ in range(num_samples):
-            try:
-                raw_bytes = self.i2c.read_block(REG_ACCEL_XOUT_H, 14)
-                _, _, _, _, _, _, gz_r = struct.unpack('>7h', bytes(raw_bytes))
-                sum_gz += (gz_r / GYRO_SCALE_LSB_PER_DPS)
-                samples_taken += 1
-            except Exception:
-                pass
-            time.sleep(0.01)
-
-        if samples_taken > 0:
-            with self.lock:
-                self.bias_gz_dps = sum_gz / samples_taken
-        return True
-
     def start(self):
         """Starts background 50 Hz polling thread."""
         self.running = True

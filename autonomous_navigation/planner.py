@@ -15,7 +15,6 @@ try:
         ORIGIN_OFFSET_X, ORIGIN_OFFSET_Y,
         ROBOT_CLEARANCE_RADIUS, CELLS_TO_INFLATE,
         K_ATT, K_REP, MAX_REP_FORCE, SAFE_DIST, SENSOR_ANGLES,
-        TOF_MIN_VALID_M,
         PIVOT_ENTER_RAD, PIVOT_EXIT_RAD,
         KP_HEADING_NAV, KD_HEADING_NAV, HEADING_DEADBAND_RAD,
         WHEEL_BASE_M, MAX_ALLOWED_SPEED, MIN_MANEUVER_SPEED
@@ -26,7 +25,6 @@ except ImportError:
         ORIGIN_OFFSET_X, ORIGIN_OFFSET_Y,
         ROBOT_CLEARANCE_RADIUS, CELLS_TO_INFLATE,
         K_ATT, K_REP, MAX_REP_FORCE, SAFE_DIST, SENSOR_ANGLES,
-        TOF_MIN_VALID_M,
         PIVOT_ENTER_RAD, PIVOT_EXIT_RAD,
         KP_HEADING_NAV, KD_HEADING_NAV, HEADING_DEADBAND_RAD,
         WHEEL_BASE_M, MAX_ALLOWED_SPEED, MIN_MANEUVER_SPEED
@@ -78,19 +76,6 @@ def mark_obstacle(grid, world_x, world_y):
             if 0 <= nx < GRID_DIM_X and 0 <= ny < GRID_DIM_Y:
                 if math.hypot(i, j) <= CELLS_TO_INFLATE:
                     grid[nx][ny] = 1
-
-
-def unmark_obstacle(grid, world_x, world_y):
-    """Clears an obstacle and its clearance halo from the grid (used to ignore false detections)."""
-    gx, gy = world_to_grid(world_x, world_y)
-
-    for i in range(-CELLS_TO_INFLATE, CELLS_TO_INFLATE + 1):
-        for j in range(-CELLS_TO_INFLATE, CELLS_TO_INFLATE + 1):
-            nx, ny = gx + i, gy + j
-            # Protect outer boundary walls (index 0 and DIM-1)
-            if 1 <= nx < GRID_DIM_X - 1 and 1 <= ny < GRID_DIM_Y - 1:
-                if math.hypot(i, j) <= CELLS_TO_INFLATE:
-                    grid[nx][ny] = 0
 
 
 def astar_grid(start_world, goal_world, grid):
@@ -199,8 +184,8 @@ def calculate_apf(current_pos, waypoint, tof_readings, current_theta, target_spe
     num_sensors = min(len(tof_readings), len(SENSOR_ANGLES))
     for i in range(num_sensors):
         distance = tof_readings[i]
-        # Ignore floor glare / extreme close (< TOF_MIN_VALID_M) and out-of-range (> SAFE_DIST)
-        if TOF_MIN_VALID_M <= distance < SAFE_DIST:
+        # Ignore floor glare / extreme close (< 0.05m) and out-of-range (> SAFE_DIST)
+        if 0.05 < distance < SAFE_DIST:
             # Inverse-square repulsion magnitude with saturation cap to prevent spikes
             raw_rep = K_REP * ((1.0 / distance) - (1.0 / SAFE_DIST)) / (distance ** 2)
             rep_mag = min(MAX_REP_FORCE, raw_rep)
@@ -253,8 +238,7 @@ def calculate_kinematics(f_total, current_theta, target_speed, is_pivoting=False
     # 2. Smooth forward drive with active PD course correction
     turn_factor = max(0.25, math.cos(heading_error))
     linear_v = min(target_speed, norm) * turn_factor
-    min_v = min(MIN_MANEUVER_SPEED, target_speed)
-    linear_v = max(min_v, linear_v)
+    linear_v = max(MIN_MANEUVER_SPEED, linear_v)
 
     # Deadband around center to eliminate tiny encoder quantization flutter
     if abs(heading_error) < HEADING_DEADBAND_RAD:

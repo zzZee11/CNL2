@@ -54,7 +54,6 @@ def save_navigation_plot(
     status: str = "COMPLETED",
     output_path: str = DEFAULT_PLOT_PATH,
     grid: Optional[List[List[int]]] = None,
-    target_theta: Optional[float] = None,
 ) -> str:
     """
     Renders and saves the 2D Cartesian navigation map and trajectory to an image file,
@@ -83,7 +82,6 @@ def save_navigation_plot(
             "distance_travelled_m": round(total_dist, 3),
             "elapsed_time_s": round(elapsed_s, 2),
             "obstacle_count": len(recorded_obstacles),
-            "target_orientation_deg": round(math.degrees(target_theta), 1) if target_theta is not None else None,
             "obstacles": [
                 {"id": idx + 1, "x": round(p[0], 3), "y": round(p[1], 3)}
                 for idx, p in enumerate(recorded_obstacles)

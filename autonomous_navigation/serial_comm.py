@@ -18,8 +18,7 @@ try:
         WHEEL_RADIUS_M, WHEEL_BASE_M, TICKS_PER_REV,
         STARTUP_PUSH_SPEED, STARTUP_PUSH_DURATION_S,
         MAX_ALLOWED_SPEED, MAX_ACCEL_MPS2, MAX_DECEL_MPS2,
-        IMU_I2C_BUS, IMU_I2C_ADDR,
-        BRAKE_PULSE_DURATION_S, BRAKE_PULSE_SPEED
+        IMU_I2C_BUS, IMU_I2C_ADDR
     )
     from .imu import IMUManager
 except ImportError:
@@ -28,8 +27,7 @@ except ImportError:
         WHEEL_RADIUS_M, WHEEL_BASE_M, TICKS_PER_REV,
         STARTUP_PUSH_SPEED, STARTUP_PUSH_DURATION_S,
         MAX_ALLOWED_SPEED, MAX_ACCEL_MPS2, MAX_DECEL_MPS2,
-        IMU_I2C_BUS, IMU_I2C_ADDR,
-        BRAKE_PULSE_DURATION_S, BRAKE_PULSE_SPEED
+        IMU_I2C_BUS, IMU_I2C_ADDR
     )
     try:
         from imu import IMUManager
@@ -127,49 +125,6 @@ class RobotSerialComm:
             self.cmd_left = 0.0
             self.cmd_right = 0.0
 
-    def active_brake(self, reverse_speed=BRAKE_PULSE_SPEED, pulse_duration_s=BRAKE_PULSE_DURATION_S):
-        """
-        Applies a brief counter-torque pulse opposite to the current travel direction
-        to cancel robot kinetic momentum instantly, then clamps command to zero.
-        In mock simulation mode, immediately stops without simulated reverse displacement.
-        """
-        if self.use_mock:
-            self.stop()
-            return
-
-        with self.cmd_lock:
-            # Check current commanded direction
-            sgn_l = -1.0 if self.cmd_left > 0.02 else (1.0 if self.cmd_left < -0.02 else 0.0)
-            sgn_r = -1.0 if self.cmd_right > 0.02 else (1.0 if self.cmd_right < -0.02 else 0.0)
-            self.push_until = 0.0
-            if sgn_l != 0.0 or sgn_r != 0.0:
-                self.cmd_left = sgn_l * reverse_speed
-                self.cmd_right = sgn_r * reverse_speed
-            else:
-                self.cmd_left = 0.0
-                self.cmd_right = 0.0
-
-        if not self.use_mock and self.ser and self.ser.is_open:
-            try:
-                msg = f"{self.cmd_left:.2f},{self.cmd_right:.2f}\n".encode("ascii")
-                self.ser.write(msg)
-                self.ser.flush()
-            except (serial.SerialException, OSError):
-                pass
-
-        time.sleep(pulse_duration_s)
-
-        with self.cmd_lock:
-            self.cmd_left = 0.0
-            self.cmd_right = 0.0
-
-        if not self.use_mock and self.ser and self.ser.is_open:
-            try:
-                self.ser.write(b"0.00,0.00\n")
-                self.ser.flush()
-            except (serial.SerialException, OSError):
-                pass
-
     def reset_odometry(self, start_x=0.0, start_y=0.0, start_theta=0.0):
         """Resets the dead reckoning pose to a known starting coordinate."""
         with self.state_lock:
@@ -181,21 +136,6 @@ class RobotSerialComm:
             self.prev_right_ticks = self.right_ticks
             if self.imu and self.imu.is_ready():
                 self.imu.reset_heading(start_theta)
-
-    def recalibrate_imu(self, num_samples=25):
-        """
-        Performs stationary zero-drift gyro bias recalibration (Solution 4)
-        while strictly preserving the current accumulated yaw heading.
-        """
-        if self.imu and self.imu.is_ready():
-            if hasattr(self.imu, "quick_recalibrate_bias"):
-                return self.imu.quick_recalibrate_bias(num_samples=num_samples)
-            elif hasattr(self.imu, "calibrate"):
-                h = self.imu.get_heading_rad()
-                self.imu.calibrate(num_samples=num_samples, quiet=True)
-                self.imu.reset_heading(h)
-                return True
-        return False
 
     def get_pose(self):
         """Returns (x, y, theta, total_distance_travelled)."""
@@ -223,19 +163,17 @@ class RobotSerialComm:
             # Center displacement (meters) from wheel encoders
             delta_s = (dist_l + dist_r) / 2.0
 
-            # Sensor Fusion: If physical IMU is healthy, use gyro spatial orientation for theta
-            if self.imu and self.imu.is_ready() and not self.use_mock:
+            # Sensor Fusion: If IMU is healthy, use gyro spatial orientation for theta
+            if self.imu and self.imu.is_ready():
                 gyro_theta = self.imu.get_heading_rad()
                 d_theta = math.atan2(math.sin(gyro_theta - self.theta), math.cos(gyro_theta - self.theta))
                 mid_theta = self.theta + (d_theta / 2.0)
                 self.theta = gyro_theta
             else:
-                # Wheel-encoder differential fallback (and simulated mock physics)
+                # Wheel-encoder differential fallback
                 delta_theta = (dist_r - dist_l) / WHEEL_BASE_M
                 mid_theta = self.theta + (delta_theta / 2.0)
                 self.theta = math.atan2(math.sin(self.theta + delta_theta), math.cos(self.theta + delta_theta))
-                if self.imu and self.use_mock:
-                    self.imu.reset_heading(self.theta)
 
             self.x += delta_s * math.cos(mid_theta)
             self.y += delta_s * math.sin(mid_theta)
