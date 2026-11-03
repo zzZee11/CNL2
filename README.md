@@ -304,16 +304,17 @@ python3 -m autonomous_navigation.main --mock --goal 1.0 1.0 --speed 0.6
 | `GRID_SIZE_X`, `Y` | `30.0 m` | Occupancy grid dimension (-15m to +15m) |
 | `GRID_RES` | `0.10 m` (10 cm) | Grid cell resolution |
 | `ROBOT_CLEARANCE_RADIUS` | `0.22 m` | Circular inflation radius around obstacles |
-| `LOOKAHEAD_DIST_M` | `0.35 m` | Pure Pursuit lookahead distance along path |
+| `LOOKAHEAD_DIST_M` | `0.55 m` | Pure Pursuit lookahead distance along path |
 | `GOAL_TOLERANCE_M` | `0.08 m` | Arrival distance tolerance |
-| `MAX_REP_FORCE` | `2.0` | Saturation cap on APF repulsive vector |
-| `MAX_ACCEL_MPS2` | `0.80 m/s²` | Slew-rate linear acceleration limit |
+| `MAX_REP_FORCE` | `1.0` | Saturation cap on APF repulsive vector |
+| `MAX_ACCEL_MPS2` | `0.50 m/s²` | Slew-rate linear acceleration limit |
 | `MAX_DECEL_MPS2` | `1.20 m/s²` | Slew-rate linear deceleration limit |
 | `PIVOT_ENTER_RAD` | `0.85 rad` (~49°) | In-place pivot entry threshold |
 | `PIVOT_EXIT_RAD` | `0.35 rad` (~20°) | In-place pivot exit threshold (hysteresis) |
-| `MAX_PIVOT_SPEED` | `0.18 m/s` | Maximum in-place pivot turning speed |
+| `MAX_PIVOT_SPEED` | `0.25 m/s` | Maximum in-place pivot turning speed |
 | `OBSTACLE_PERSISTENCE`| `10 cycles` | Filter against floor bounce and noise spikes |
-| `SAFE_DIST` | `1.00 m` | APF obstacle repulsion detection distance |
+| `OBSTACLE_MAP_MAX_DIST`| `1.00 m` | Global A* occupancy grid obstacle mapping distance |
+| `SAFE_DIST` | `0.45 m` | Local APF obstacle repulsion distance |
 
 ### Vision Pipeline Constants (`vision/config.py`)
 | Parameter | Value | Description |

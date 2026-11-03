@@ -59,7 +59,7 @@ DEFAULT_PLOT_PATH = "autonomous_navigation/navigation_result.png"
 K_ATT = 1.4                   # Attractive force towards current waypoint
 K_REP = 0.35                  # Repulsive force away from ToF obstacles (tuned to prevent spikes)
 MAX_REP_FORCE = 1.0           # Saturation clamp on repulsive force to prevent erratic twitches
-SAFE_DIST = 1.00              # Obstacles detected from 1.0 meter far start repelling robot (updated from 0.30)
+SAFE_DIST = 0.45              # Local APF obstacle repulsion distance (0.45m prevents corridor ping-pong)
 CRITICAL_STOP_DIST = 0.08     # Emergency stop distance (meters)
 SENSOR_ANGLES = [
     math.pi / 4.0,            # Left sensor (+45 deg)
@@ -74,13 +74,13 @@ MAX_PIVOT_SPEED = 0.25        # Capped pivot speed (m/s) for calm, controlled tu
 MIN_PIVOT_SPEED = 0.15        # Minimum pivot speed (m/s) to overcome floor friction
 
 # Heading Lock & Course Correction (PD Control)
-KP_HEADING_NAV = 1.3          # Proportional angular steering gain (softened for gentle steering)
-KD_HEADING_NAV = 0.10         # Derivative rate damping gain to prevent heading overshoots
+KP_HEADING_NAV = 1.0          # Proportional angular steering gain (softened to eliminate limit-cycle weaving)
+KD_HEADING_NAV = 0.18         # Derivative rate damping gain to prevent heading overshoots
 HEADING_DEADBAND_RAD = 0.035  # ~2.0 deg deadband: drive straight when aligned
 
 # Goal Arrival Precision & Pure Pursuit Lookahead
 GOAL_TOLERANCE_M = 0.08       # Target arrival distance tolerance in meters
-LOOKAHEAD_DIST_M = 0.35       # Pure pursuit lookahead distance (meters) along waypoint path
+LOOKAHEAD_DIST_M = 0.55       # Pure pursuit lookahead distance (meters) along waypoint path (smooth path tracking)
 
 # Obstacle Mapping Persistence & Distance Filter
 OBSTACLE_PERSISTENCE_COUNT = 10 # Must see obstacle in >= 10 consecutive cycles to map it (safety filter)

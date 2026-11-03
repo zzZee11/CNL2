@@ -201,8 +201,15 @@ class RobotSerialComm:
                 current_cmd_r = 0.0
             else:
                 if pushing:
-                    target_l = STARTUP_PUSH_SPEED if l > 0.05 else l
-                    target_r = STARTUP_PUSH_SPEED if r > 0.05 else r
+                    max_v = max(l, r)
+                    if max_v > 0.05:
+                        # Scale both wheels proportionally to break stiction without yaw kick
+                        scale = STARTUP_PUSH_SPEED / max_v
+                        target_l = min(MAX_ALLOWED_SPEED, l * scale)
+                        target_r = min(MAX_ALLOWED_SPEED, r * scale)
+                    else:
+                        target_l = l
+                        target_r = r
                 else:
                     target_l = l
                     target_r = r

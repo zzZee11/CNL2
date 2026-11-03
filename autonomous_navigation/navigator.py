@@ -247,7 +247,7 @@ class AutonomousNavigator:
                     else:
                         break
 
-                # Select lookahead target waypoint along path (approx 35 cm ahead) for smooth tracking
+                # Select lookahead target waypoint along path (LOOKAHEAD_DIST_M ahead) for smooth tracking
                 target_wp = waypoints[-1]
                 for wp in waypoints:
                     if math.hypot(wp[0] - cur_x, wp[1] - cur_y) >= LOOKAHEAD_DIST_M:
