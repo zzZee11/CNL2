@@ -311,7 +311,7 @@ python3 -m autonomous_navigation.main --mock --goal 1.0 1.0 --speed 0.6
 | `MAX_DECEL_MPS2` | `1.20 m/s²` | Slew-rate linear deceleration limit |
 | `PIVOT_ENTER_RAD` | `0.85 rad` (~49°) | In-place pivot entry threshold |
 | `PIVOT_EXIT_RAD` | `0.35 rad` (~20°) | In-place pivot exit threshold (hysteresis) |
-| `MAX_PIVOT_SPEED` | `0.13 m/s` | Maximum in-place pivot turning speed |
+| `MAX_PIVOT_SPEED` | `0.18 m/s` | Maximum in-place pivot turning speed |
 | `OBSTACLE_PERSISTENCE`| `10 cycles` | Filter against floor bounce and noise spikes |
 | `SAFE_DIST` | `1.00 m` | APF obstacle repulsion detection distance |
 

@@ -254,7 +254,7 @@ def move(distance_m, cruise_speed=DEFAULT_CRUISE_MPS):
     print(f"Movement complete: {travelled_m:.2f} m | Final Heading Drift: {heading_final_deg:+.1f}° [{sensor_tag}]\n")
 
 
-def turn(target_deg, max_speed=0.14):
+def turn(target_deg, max_speed=0.18):
     """
     Pivots the robot in-place by a specific angular displacement (degrees)
     using the MPU-6050 gyroscope (or encoder ticks as fallback).

@@ -145,8 +145,6 @@ class AutonomousNavigator:
         if len(waypoints) > 1:
             waypoints.pop(0)  # Pop starting position
 
-        # Safety timeout: 3x expected travel time + 15s buffer
-        timeout = (direct_dist / speed_mps) * 3.5 + 15.0
         start_time = time.time()
         last_log_time = 0.0
         mission_status = "FAILED"
@@ -154,10 +152,6 @@ class AutonomousNavigator:
         try:
             while not self.stop_requested and waypoints:
                 now = time.time()
-                if now - start_time > timeout:
-                    print(f"\n[Nav] TIMEOUT: Mission took longer than {timeout:.1f}s.")
-                    mission_status = "TIMEOUT"
-                    break
 
                 # 1. Get current pose and odometry
                 cur_x, cur_y, cur_theta, total_dist = self.comm.get_pose()

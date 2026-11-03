@@ -67,10 +67,10 @@ SENSOR_ANGLES = [
     -math.pi / 4.0            # Right sensor (-45 deg)
 ]
 
-# In-Place Pivot Heading Thresholds & Speed Limits (Calm, Slower Turning)
+# In-Place Pivot Heading Thresholds & Speed Limits (Calm Turning)
 PIVOT_ENTER_RAD = 0.85        # ~49 deg: enter in-place pivot if heading error exceeds this
 PIVOT_EXIT_RAD = 0.35         # ~20 deg: exit in-place pivot only when aligned within this
-MAX_PIVOT_SPEED = 0.15        # Capped pivot speed (m/s) for very calm, controlled turns (lowered from 0.18)
+MAX_PIVOT_SPEED = 0.18        # Capped pivot speed (m/s) for calm, controlled turns (default: 0.18 m/s)
 MIN_PIVOT_SPEED = 0.10        # Minimum pivot speed (m/s) to overcome floor friction
 
 # Heading Lock & Course Correction (PD Control)
