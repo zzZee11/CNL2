@@ -14,12 +14,14 @@ Capabilities:
 
 import time
 import math
+import random
 from typing import List, Tuple, Optional
 
 try:
     from .config import (
         DEFAULT_SPEED, SENSOR_ANGLES,
         CRITICAL_STOP_DIST, TOF_MAX_RANGE_M,
+        SAFE_DIST,
         OBSTACLE_PERSISTENCE_COUNT, OBSTACLE_MAP_MAX_DIST_M,
         GOAL_TOLERANCE_M, LOOKAHEAD_DIST_M,
         DEFAULT_PLOT_PATH
@@ -35,6 +37,7 @@ except ImportError:
     from config import (
         DEFAULT_SPEED, SENSOR_ANGLES,
         CRITICAL_STOP_DIST, TOF_MAX_RANGE_M,
+        SAFE_DIST,
         OBSTACLE_PERSISTENCE_COUNT, OBSTACLE_MAP_MAX_DIST_M,
         GOAL_TOLERANCE_M, LOOKAHEAD_DIST_M,
         DEFAULT_PLOT_PATH
@@ -63,6 +66,10 @@ class AutonomousNavigator:
         # Heading error tracking for PD course-correction rate damping
         self.last_heading_err = 0.0
         self.last_kinematics_time = 0.0
+
+        # Randomized head-on obstacle avoidance direction (+1.0 Left, -1.0 Right)
+        self.middle_avoidance_dir: Optional[float] = None
+        self.middle_avoidance_start_time: float = 0.0
 
         # Mission logging & trajectory history
         self.last_trajectory: List[Tuple[float, float]] = []
@@ -118,6 +125,8 @@ class AutonomousNavigator:
         self.sensor_hit_counts = [0, 0, 0]
         self.last_sensor_dists = [9.99, 9.99, 9.99]
         self.is_pivoting = False
+        self.middle_avoidance_dir = None
+        self.middle_avoidance_start_time = 0.0
         self.last_heading_err = 0.0
         self.last_kinematics_time = time.time()
 
@@ -260,13 +269,36 @@ class AutonomousNavigator:
                     # Smooth deceleration ramp for the final 40 cm to stop precisely at goal
                     effective_speed = max(0.10, speed_mps * (dist_to_goal / 0.40))
 
+                # Symmetry Breaking: If obstacle detected ONLY at middle sensor, choose direction randomly
+                d_left = tof_readings[0]
+                d_mid = tof_readings[1]
+                d_right = tof_readings[2]
+                is_middle_obstacle = (0.05 < d_mid < SAFE_DIST)
+                is_left_clear = (d_left >= SAFE_DIST)
+                is_right_clear = (d_right >= SAFE_DIST)
+
+                if is_middle_obstacle and is_left_clear and is_right_clear:
+                    if self.middle_avoidance_dir is None:
+                        # Choose randomly between Left (+1.0) and Right (-1.0)
+                        self.middle_avoidance_dir = random.choice([1.0, -1.0])
+                        self.middle_avoidance_start_time = now
+                        side_name = "LEFT" if self.middle_avoidance_dir > 0 else "RIGHT"
+                        print(f"\n[Nav] Head-on obstacle detected at middle sensor ({d_mid:.2f}m)! Randomly chosen avoidance direction: {side_name}")
+                elif not is_middle_obstacle or (now - self.middle_avoidance_start_time > 3.0):
+                    # Reset latched choice once middle sensor clears or after 3.0s maneuver window
+                    if self.middle_avoidance_dir is not None and not is_middle_obstacle:
+                        self.middle_avoidance_dir = None
+
                 # Check for physical collision impact spike from IMU accelerometer
                 if self.comm.imu and self.comm.imu.has_collision():
                     print("\n[Nav] EMERGENCY: Physical impact shock detected by IMU! Halting.")
                     mission_status = "COLLISION_HALT"
                     break
 
-                f_total = calculate_apf(current_pos, target_wp, tof_readings, cur_theta, effective_speed)
+                f_total = calculate_apf(
+                    current_pos, target_wp, tof_readings, cur_theta, effective_speed,
+                    middle_bias=self.middle_avoidance_dir or 0.0
+                )
 
                 # Derivative rate of heading error for PD damping (Course Correction)
                 desired_theta = math.atan2(f_total[1], f_total[0])
