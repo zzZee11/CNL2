@@ -40,12 +40,14 @@ try:
     from .navigator import AutonomousNavigator
     from .plotter import save_navigation_plot
     from .imu import IMUManager
+    from .calibration import run_interactive_calibration
 except ImportError:
     from config import SERIAL_PORT, SERIAL_BAUD, DEFAULT_SPEED, DEFAULT_PLOT_PATH, IMU_I2C_BUS, IMU_I2C_ADDR
     from sensors import DistanceSensorManager
     from serial_comm import RobotSerialComm
     from navigator import AutonomousNavigator
     from plotter import save_navigation_plot
+    from calibration import run_interactive_calibration
     try:
         from imu import IMUManager
     except ImportError:
@@ -95,6 +97,10 @@ def parse_args():
     parser.add_argument(
         "--baud", "-b", type=int, default=SERIAL_BAUD,
         help=f"Serial baud rate (default: {SERIAL_BAUD})"
+    )
+    parser.add_argument(
+        "--calibrate", action="store_true",
+        help="Run interactive physical odometry calibration wizard (wheel radius and track width)"
     )
     parser.add_argument(
         "--mock", action="store_true",
@@ -323,6 +329,11 @@ def run_interactive(nav, sensors, comm, default_plot_path=DEFAULT_PLOT_PATH):
                 print("[IMU] IMU not connected or in mock mode.")
             continue
 
+        # Calibration wizard
+        if cmd_lower in ("calibrate", "cal"):
+            run_interactive_calibration(comm, nav)
+            continue
+
         # Plot command
         if cmd_lower.startswith("plot"):
             parts = line.split(maxsplit=1)
@@ -430,6 +441,10 @@ def main():
     nav = AutonomousNavigator(serial_comm=comm, sensor_mgr=sensors)
 
     try:
+        if getattr(args, "calibrate", False):
+            run_interactive_calibration(comm, nav)
+            return
+
         if args.goal is not None:
             # 2D Cartesian target navigation: --goal X Y [THETA]
             if len(args.goal) == 1:

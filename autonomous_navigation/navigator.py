@@ -18,12 +18,15 @@ from typing import List, Tuple, Optional
 
 try:
     from .config import (
-        DEFAULT_SPEED, SENSOR_ANGLES,
+        DEFAULT_SPEED, SENSOR_ANGLES, WHEEL_BASE_M,
         CRITICAL_STOP_DIST, CRITICAL_PERSIST_TICKS,
         TOF_MIN_VALID_M, TOF_MAX_RANGE_M,
         OBSTACLE_PERSISTENCE_COUNT, OBSTACLE_CONFIRM_RADIUS_M,
         OBSTACLE_MAP_MAX_DIST_M, MIN_OBSTACLE_SPACING_M,
-        GOAL_TOLERANCE_M, LOOKAHEAD_DIST_M,
+        GOAL_TOLERANCE_M, TERMINAL_GOAL_TOLERANCE_M,
+        TERMINAL_DECEL_DIST_M, TERMINAL_CREEP_DIST_M,
+        MIN_TERMINAL_CREEP_SPEED,
+        LOOKAHEAD_DIST_M, MIN_LOOKAHEAD_DIST_M,
         FINAL_HEADING_TOLERANCE_DEG, KP_ALIGN_TURN, KD_ALIGN_TURN,
         MIN_ALIGN_SPEED, MAX_ALIGN_SPEED,
         DEFAULT_PLOT_PATH
@@ -37,12 +40,15 @@ try:
     from .plotter import save_navigation_plot
 except ImportError:
     from config import (
-        DEFAULT_SPEED, SENSOR_ANGLES,
+        DEFAULT_SPEED, SENSOR_ANGLES, WHEEL_BASE_M,
         CRITICAL_STOP_DIST, CRITICAL_PERSIST_TICKS,
         TOF_MIN_VALID_M, TOF_MAX_RANGE_M,
         OBSTACLE_PERSISTENCE_COUNT, OBSTACLE_CONFIRM_RADIUS_M,
         OBSTACLE_MAP_MAX_DIST_M, MIN_OBSTACLE_SPACING_M,
-        GOAL_TOLERANCE_M, LOOKAHEAD_DIST_M,
+        GOAL_TOLERANCE_M, TERMINAL_GOAL_TOLERANCE_M,
+        TERMINAL_DECEL_DIST_M, TERMINAL_CREEP_DIST_M,
+        MIN_TERMINAL_CREEP_SPEED,
+        LOOKAHEAD_DIST_M, MIN_LOOKAHEAD_DIST_M,
         FINAL_HEADING_TOLERANCE_DEG, KP_ALIGN_TURN, KD_ALIGN_TURN,
         MIN_ALIGN_SPEED, MAX_ALIGN_SPEED,
         DEFAULT_PLOT_PATH
@@ -215,9 +221,10 @@ class AutonomousNavigator:
 
                 # Distance remaining to ultimate goal
                 dist_to_goal = math.hypot(target_x - cur_x, target_y - cur_y)
-                if dist_to_goal < GOAL_TOLERANCE_M:
-                    print(f"\n[Nav] GOAL REACHED! Distance to target: {dist_to_goal:.2f} m (< {GOAL_TOLERANCE_M:.2f}m tolerance).")
+                if dist_to_goal <= TERMINAL_GOAL_TOLERANCE_M:
+                    print(f"\n[Nav] GOAL REACHED! Distance to target: {dist_to_goal*100.0:.1f} cm (<= {TERMINAL_GOAL_TOLERANCE_M*100.0:.1f} cm tolerance).")
                     mission_status = "GOAL REACHED"
+                    self.comm.active_brake()
                     break
 
                 # 2. Read live ToF distance sensors [Left, Middle, Right]
@@ -340,26 +347,35 @@ class AutonomousNavigator:
                     print(f"[Nav] New path computed with {len(waypoints)} waypoints.")
                     continue
 
-                # 6. Waypoint Tracking with Pure Pursuit Lookahead
+                # 6. Waypoint Tracking with Adaptive Shrinking Pure Pursuit Lookahead (Solution 2)
+                wp_pop_thresh = min(0.20, max(0.06, dist_to_goal * 0.45))
                 while len(waypoints) > 1:
                     wp_dist = math.hypot(waypoints[0][0] - cur_x, waypoints[0][1] - cur_y)
-                    if wp_dist < 0.22:
+                    if wp_dist < wp_pop_thresh:
                         waypoints.pop(0)
                     else:
                         break
 
-                # Select lookahead target waypoint along path (approx 35 cm ahead) for smooth tracking
+                # Dynamic lookahead: shrinks smoothly from LOOKAHEAD_DIST_M down to MIN_LOOKAHEAD_DIST_M near destination
+                adaptive_lookahead = min(LOOKAHEAD_DIST_M, max(MIN_LOOKAHEAD_DIST_M, dist_to_goal * 0.50))
                 target_wp = waypoints[-1]
                 for wp in waypoints:
-                    if math.hypot(wp[0] - cur_x, wp[1] - cur_y) >= LOOKAHEAD_DIST_M:
+                    if math.hypot(wp[0] - cur_x, wp[1] - cur_y) >= adaptive_lookahead:
                         target_wp = wp
                         break
 
-                # 7. Local APF Reactive Avoidance & Velocity Calculation
-                effective_speed = speed_mps
-                if dist_to_goal < 0.40:
-                    # Smooth deceleration ramp for the final 40 cm to stop precisely at goal
-                    effective_speed = max(0.10, speed_mps * (dist_to_goal / 0.40))
+                # 7. Local APF Reactive Avoidance & Multi-Stage Deceleration (Solution 1)
+                # Stage 1: Cruising speed when > TERMINAL_DECEL_DIST_M
+                # Stage 2: Linear deceleration down to 0.10 m/s in [TERMINAL_CREEP_DIST_M, TERMINAL_DECEL_DIST_M]
+                # Stage 3: Terminal precision creep down to MIN_TERMINAL_CREEP_SPEED (0.04 m/s) in [0, TERMINAL_CREEP_DIST_M]
+                if dist_to_goal >= TERMINAL_DECEL_DIST_M:
+                    effective_speed = speed_mps
+                elif dist_to_goal >= TERMINAL_CREEP_DIST_M:
+                    ratio = (dist_to_goal - TERMINAL_CREEP_DIST_M) / max(0.01, TERMINAL_DECEL_DIST_M - TERMINAL_CREEP_DIST_M)
+                    effective_speed = 0.10 + (speed_mps - 0.10) * ratio
+                else:
+                    ratio = max(0.0, (dist_to_goal - TERMINAL_GOAL_TOLERANCE_M) / max(0.01, TERMINAL_CREEP_DIST_M - TERMINAL_GOAL_TOLERANCE_M))
+                    effective_speed = MIN_TERMINAL_CREEP_SPEED + (0.10 - MIN_TERMINAL_CREEP_SPEED) * ratio
 
                 # Check for physical collision impact spike from IMU accelerometer
                 if self.comm.imu and self.comm.imu.has_collision():
@@ -414,6 +430,14 @@ class AutonomousNavigator:
         finally:
             self.comm.stop()
 
+        # Closed-loop fine docking onto destination (Solution 3)
+        cur_x, cur_y, _, _ = self.comm.get_pose()
+        dist_final = math.hypot(goal_pos[0] - cur_x, goal_pos[1] - cur_y)
+        if (mission_status == "GOAL REACHED" or dist_final < TERMINAL_CREEP_DIST_M) and not self.stop_requested:
+            dock_ok = self._fine_dock(goal_pos[0], goal_pos[1])
+            if dock_ok:
+                mission_status = "GOAL REACHED"
+
         # Final orientation alignment at destination if requested and goal was reached
         if mission_status == "GOAL REACHED" and target_theta_deg is not None and not self.stop_requested:
             align_ok = self._align_to_orientation(target_theta_deg)
@@ -460,6 +484,75 @@ class AutonomousNavigator:
             )
 
         return mission_status == "GOAL REACHED"
+
+    def _fine_dock(self, target_x: float, target_y: float, timeout_s: float = 4.0) -> bool:
+        """
+        Precision closed-loop terminal docking correction (Solution 3).
+        Nudges the robot forward at creeping speed (0.04 - 0.08 m/s) with gentle heading steering
+        directly onto (target_x, target_y) until remaining distance <= TERMINAL_GOAL_TOLERANCE_M (2.5 cm).
+        Applies active electric braking upon arrival.
+        """
+        cur_x, cur_y, _, _ = self.comm.get_pose()
+        dist_init = math.hypot(target_x - cur_x, target_y - cur_y)
+        if dist_init <= TERMINAL_GOAL_TOLERANCE_M:
+            self.comm.active_brake()
+            return True
+
+        print(f"[Nav] Fine Docking: Nudging into exact target ({target_x:.2f}, {target_y:.2f}) from {dist_init*100.0:.1f} cm...")
+        t0 = time.time()
+        last_log = 0.0
+
+        try:
+            while not self.stop_requested and (time.time() - t0 < timeout_s):
+                now = time.time()
+                cur_x, cur_y, cur_theta, _ = self.comm.get_pose()
+                dx = target_x - cur_x
+                dy = target_y - cur_y
+                dist = math.hypot(dx, dy)
+
+                if dist <= TERMINAL_GOAL_TOLERANCE_M:
+                    self.comm.active_brake()
+                    print(f"[Nav] Fine docking achieved! Landing distance: {dist*100.0:.1f} cm (<= {TERMINAL_GOAL_TOLERANCE_M*100.0:.1f} cm tolerance).")
+                    return True
+
+                target_bearing = math.atan2(dy, dx)
+                bearing_err = math.atan2(
+                    math.sin(target_bearing - cur_theta),
+                    math.cos(target_bearing - cur_theta)
+                )
+
+                # If bearing error is large (> 45 deg) and robot is not already in tight docking contact (> 3.5 cm),
+                # pivot gently in place to face target
+                if abs(bearing_err) > math.radians(45.0) and dist > 0.035:
+                    turn_speed = 0.14
+                    cmd_l = -math.copysign(turn_speed, bearing_err)
+                    cmd_r = +math.copysign(turn_speed, bearing_err)
+                    self.comm.set_speeds(cmd_l, cmd_r)
+                    time.sleep(0.04)
+                    continue
+
+                # Creep directly toward the target
+                creep_speed = max(MIN_TERMINAL_CREEP_SPEED, min(0.08, dist * 0.75))
+                kp_steer = 0.6
+                omega = kp_steer * bearing_err
+                v_l = creep_speed - (omega * WHEEL_BASE_M / 2.0)
+                v_r = creep_speed + (omega * WHEEL_BASE_M / 2.0)
+
+                self.comm.set_speeds(v_l, v_r)
+
+                if now - last_log > 0.4:
+                    print(f"  [FineDock] Pos: ({cur_x:.3f}, {cur_y:.3f}) | Rem: {dist*100.0:.1f} cm | Cmd: ({v_l:.2f}, {v_r:.2f}) m/s")
+                    last_log = now
+
+                time.sleep(0.04)
+
+        finally:
+            self.comm.active_brake()
+
+        cur_x, cur_y, _, _ = self.comm.get_pose()
+        final_dist = math.hypot(target_x - cur_x, target_y - cur_y)
+        print(f"[Nav] Fine docking concluded: Distance to target is {final_dist*100.0:.1f} cm.")
+        return final_dist <= TERMINAL_GOAL_TOLERANCE_M
 
     def _align_to_orientation(self, target_deg: float, timeout_s: float = 6.0) -> bool:
         """
@@ -610,9 +703,10 @@ class AutonomousNavigator:
                     self.last_trajectory.append((cur_x, cur_y))
 
                 dist_to_goal = math.hypot(goal_pos[0] - cur_x, goal_pos[1] - cur_y)
-                if dist_to_goal < GOAL_TOLERANCE_M:
-                    print(f"\n[Nav] [{label}] DESTINATION REACHED! Distance to target: {dist_to_goal:.2f} m (< {GOAL_TOLERANCE_M:.2f}m).")
+                if dist_to_goal <= TERMINAL_GOAL_TOLERANCE_M:
+                    print(f"\n[Nav] [{label}] DESTINATION REACHED! Distance to target: {dist_to_goal*100.0:.1f} cm (<= {TERMINAL_GOAL_TOLERANCE_M*100.0:.1f} cm tolerance).")
                     mission_status = "GOAL REACHED"
+                    self.comm.active_brake()
                     break
 
                 # 2. Read live ToF distance sensors [Left, Middle, Right]
@@ -641,23 +735,32 @@ class AutonomousNavigator:
                     mission_status = "BLOCKED"
                     break
 
-                # Advance waypoints
+                # Advance waypoints with adaptive radius (Solution 2)
+                wp_pop_thresh = min(0.20, max(0.06, dist_to_goal * 0.45))
                 while len(waypoints) > 1:
                     wp_dist = math.hypot(waypoints[0][0] - cur_x, waypoints[0][1] - cur_y)
-                    if wp_dist < 0.22:
+                    if wp_dist < wp_pop_thresh:
                         waypoints.pop(0)
                     else:
                         break
 
+                # Dynamic lookahead: shrinks smoothly from LOOKAHEAD_DIST_M down to MIN_LOOKAHEAD_DIST_M near destination
+                adaptive_lookahead = min(LOOKAHEAD_DIST_M, max(MIN_LOOKAHEAD_DIST_M, dist_to_goal * 0.50))
                 target_wp = waypoints[-1]
                 for wp in waypoints:
-                    if math.hypot(wp[0] - cur_x, wp[1] - cur_y) >= LOOKAHEAD_DIST_M:
+                    if math.hypot(wp[0] - cur_x, wp[1] - cur_y) >= adaptive_lookahead:
                         target_wp = wp
                         break
 
-                effective_speed = speed_mps
-                if dist_to_goal < 0.40:
-                    effective_speed = max(0.10, speed_mps * (dist_to_goal / 0.40))
+                # Multi-stage deceleration (Solution 1)
+                if dist_to_goal >= TERMINAL_DECEL_DIST_M:
+                    effective_speed = speed_mps
+                elif dist_to_goal >= TERMINAL_CREEP_DIST_M:
+                    ratio = (dist_to_goal - TERMINAL_CREEP_DIST_M) / max(0.01, TERMINAL_DECEL_DIST_M - TERMINAL_CREEP_DIST_M)
+                    effective_speed = 0.10 + (speed_mps - 0.10) * ratio
+                else:
+                    ratio = max(0.0, (dist_to_goal - TERMINAL_GOAL_TOLERANCE_M) / max(0.01, TERMINAL_CREEP_DIST_M - TERMINAL_GOAL_TOLERANCE_M))
+                    effective_speed = MIN_TERMINAL_CREEP_SPEED + (0.10 - MIN_TERMINAL_CREEP_SPEED) * ratio
 
                 if self.comm.imu and self.comm.imu.has_collision():
                     print(f"\n[Nav] [{label}] Physical impact shock detected by IMU! Halting.")
@@ -706,6 +809,14 @@ class AutonomousNavigator:
         finally:
             self.comm.stop()
 
+        # Closed-loop fine docking onto destination (Solution 3)
+        cur_x, cur_y, _, _ = self.comm.get_pose()
+        dist_final = math.hypot(goal_pos[0] - cur_x, goal_pos[1] - cur_y)
+        if (mission_status == "GOAL REACHED" or dist_final < TERMINAL_CREEP_DIST_M) and not self.stop_requested:
+            dock_ok = self._fine_dock(goal_pos[0], goal_pos[1])
+            if dock_ok:
+                mission_status = "GOAL REACHED"
+
         # Final orientation alignment at destination if requested and goal was reached
         if mission_status == "GOAL REACHED" and target_theta_deg is not None and not self.stop_requested:
             self._align_to_orientation(target_theta_deg)
@@ -740,6 +851,12 @@ class AutonomousNavigator:
         print(f"[Nav] Return Waypoints: {len(return_path)} | Target Orientation: {target_theta_deg:+.1f}°")
         print(f"[Nav] Mode: FORWARD MOTION (Pivoting in-place at goal first)")
         print(f"[Nav] ========================================================\n")
+
+        # Solution 4: Perform stationary gyro zero-motion bias re-calibration before turnaround
+        if self.comm.imu and self.comm.imu.is_ready():
+            print("[Nav] Gyro Lock: Re-zeroing stationary gyro bias before turnaround...")
+            time.sleep(0.12)
+            self.comm.recalibrate_imu(num_samples=25)
 
         ok = self.follow_path(
             path=return_path,
@@ -842,6 +959,9 @@ class AutonomousNavigator:
 
         # Cycle 1 - Return Leg
         print(f"\n[Nav] >>> CYCLE 1/{cycles} - Leg 2/{cycles*2}: Goal ({target_x:.2f}, {target_y:.2f}) -> Start (0,0) [Exact Path]")
+        if self.comm.imu and self.comm.imu.is_ready():
+            time.sleep(0.12)
+            self.comm.recalibrate_imu(num_samples=25)
         ok = self.follow_path(
             established_return,
             speed_mps=speed_mps,

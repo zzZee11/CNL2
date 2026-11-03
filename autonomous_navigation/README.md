@@ -110,10 +110,12 @@ python3 -m autonomous_navigation.main --mock
   nav> turn -45 deg                     # Pivot in-place 45 degrees CW (Right)
   ```
 
-* **Diagnostics & Utility**:
+* **Diagnostics, Utility & Calibration**:
   ```text
   nav> sensors                          # Live distance readings from Left, Middle, Right ToF
   nav> pose                             # Displays current (X, Y, Theta, Distance travelled)
+  nav> imu                              # Live MPU-6050 heading, turn-rate, accel & tilt
+  nav> calibrate                        # Interactive physical wheel radius (R) and track width (L) wizard
   nav> plot                             # Generates navigation_result.png & JSON telemetry
   nav> stop                             # Emergency stop
   nav> quit                             # Clean exit
@@ -122,6 +124,12 @@ python3 -m autonomous_navigation.main --mock
 ---
 
 ### Option 2: Direct Command Line One-Liners
+
+* **Physical Odometry Calibration Wizard**:
+  ```bash
+  python3 -m autonomous_navigation.main --calibrate
+  ```
+  Runs the interactive calibration wizard to tune wheel radius $R$ and track width $L$ on your specific floor surface. Saves results to `calibration.json`.
 
 * **Navigate to Coordinate with Final Orientation**:
   ```bash
@@ -187,15 +195,17 @@ After every mission, the system automatically exports:
 autonomous_navigation/
 ├── __init__.py           # Module package initialization
 ├── config.py             # System parameters, hardware pins, speeds, and safety thresholds
+├── calibration.py        # Physical wheel radius & track width calibration wizard
 ├── sensors.py            # 3x VL53L0X ToF driver with median filtering & sequential XSHUT booting
 ├── imu.py                # MPU-6050 spatial IMU driver with gyro calibration & collision detection
 ├── planner.py            # A* grid pathfinder, APF local vector field & differential kinematics
-├── serial_comm.py        # ESP32 20 Hz UART stream, IMU-fused odometry, and startup kick
-├── navigator.py          # Mission orchestrator, return-to-start, patrol, and spatial consensus
+├── serial_comm.py        # ESP32 20 Hz UART stream, IMU-fused odometry, active electric brake
+├── navigator.py          # Mission orchestrator, return-to-start, patrol, fine docking, and spatial consensus
 ├── plotter.py            # Matplotlib swept corridor, continuous chains, and JSON telemetry exporter
 ├── main.py               # Main CLI and interactive entry point
 ├── tests/
 │   ├── __init__.py
+│   ├── test_legacy_a_search_theory.py # Validates navigation theory against legacy algorithms
 │   └── test_navigator.py # Full unit test suite (A*, APF, kinematics, retrace, patrol, filters)
 └── README.md             # Documentation and usage guide
 ```

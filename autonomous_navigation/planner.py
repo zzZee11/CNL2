@@ -253,7 +253,8 @@ def calculate_kinematics(f_total, current_theta, target_speed, is_pivoting=False
     # 2. Smooth forward drive with active PD course correction
     turn_factor = max(0.25, math.cos(heading_error))
     linear_v = min(target_speed, norm) * turn_factor
-    linear_v = max(MIN_MANEUVER_SPEED, linear_v)
+    min_v = min(MIN_MANEUVER_SPEED, target_speed)
+    linear_v = max(min_v, linear_v)
 
     # Deadband around center to eliminate tiny encoder quantization flutter
     if abs(heading_error) < HEADING_DEADBAND_RAD:

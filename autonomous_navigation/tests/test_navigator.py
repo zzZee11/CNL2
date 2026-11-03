@@ -232,13 +232,27 @@ class TestAutonomousNavigator(unittest.TestCase):
         )
         self.assertTrue(ok_ret)
 
-        # 3. Verify final position is at (0, 0) facing 0.0°
+        # 3. Verify final position is at (0, 0) facing 0.0° with high precision
         cur_x, cur_y, cur_theta, total_dist = self.comm.get_pose()
-        self.assertAlmostEqual(cur_x, 0.0, delta=0.12)
-        self.assertAlmostEqual(cur_y, 0.0, delta=0.12)
+        self.assertAlmostEqual(cur_x, 0.0, delta=0.04)
+        self.assertAlmostEqual(cur_y, 0.0, delta=0.04)
         self.assertAlmostEqual(math.degrees(cur_theta), 0.0, delta=5.0)
         self.assertGreater(total_dist, 0.60)  # Outward + Return distance
         self.assertTrue(os.path.exists(self.test_plot_file))
+
+    def test_terminal_docking_and_active_brake(self):
+        # Set pose slightly offset (e.g. 5 cm off origin)
+        self.comm.reset_odometry(start_x=0.05, start_y=0.03, start_theta=math.radians(180.0))
+        # Call fine dock onto (0.0, 0.0)
+        docked = self.nav._fine_dock(0.0, 0.0, timeout_s=3.0)
+        self.assertTrue(docked)
+        fx, fy, _, _ = self.comm.get_pose()
+        rem_dist = math.hypot(fx, fy)
+        self.assertLessEqual(rem_dist, 0.026)  # Within 2.5 cm terminal tolerance
+        # Verify active brake sets command to zero
+        self.comm.active_brake()
+        self.assertEqual(self.comm.cmd_left, 0.0)
+        self.assertEqual(self.comm.cmd_right, 0.0)
 
     def test_patrol_back_and_forth(self):
         # Run a 2-cycle patrol (4 legs total) between (0, 0) and (0.3, 0.3)
@@ -358,6 +372,51 @@ class TestAutonomousNavigator(unittest.TestCase):
         confirmed_static = [c for c in self.nav.candidate_obstacles if c.get("hits", 0) >= 5]
         self.assertEqual(len(confirmed_static), 1)
         self.assertAlmostEqual(confirmed_static[0]["x"], 0.80, delta=0.05)
+
+    def test_imu_quick_recalibrate_bias_preserves_heading(self):
+        from autonomous_navigation.imu import IMUManager
+        mock_imu = IMUManager(use_mock=True)
+        mock_imu.initialize()
+        mock_imu.start()
+        # Set heading to 45 degrees
+        mock_imu.reset_heading(math.radians(45.0))
+        self.assertAlmostEqual(mock_imu.get_heading_deg(), 45.0, delta=0.1)
+
+        # Quick recalibration must preserve existing heading
+        ok = mock_imu.quick_recalibrate_bias(num_samples=10)
+        self.assertTrue(ok)
+        self.assertAlmostEqual(mock_imu.get_heading_deg(), 45.0, delta=0.1)
+
+        fused_comm = RobotSerialComm(use_mock=True, imu=mock_imu)
+        fused_comm.connect()
+        ok_comm = fused_comm.recalibrate_imu(num_samples=10)
+        self.assertTrue(ok_comm)
+        self.assertAlmostEqual(mock_imu.get_heading_deg(), 45.0, delta=0.1)
+        fused_comm.close()
+
+    def test_calibration_linear_distance_and_wheel_base(self):
+        from autonomous_navigation.calibration import calibrate_linear_distance, calibrate_wheel_base
+        from autonomous_navigation import config
+
+        # Test distance calibration calculation with a 2% scale discrepancy (102 cm measured for 100 cm commanded)
+        new_r, ratio = calibrate_linear_distance(self.comm, target_dist_m=1.00, user_measured_cm=102.0)
+        self.assertAlmostEqual(ratio, 1.02, places=3)
+        self.assertAlmostEqual(new_r, config.DEFAULT_WHEEL_RADIUS_M * 1.02, places=4)
+
+        # Test wheel base calibration calculation with an offset (+18 deg over 720 deg)
+        new_l, ratio_l = calibrate_wheel_base(self.comm, num_turns=2, user_offset_deg=18.0)
+        expected_ratio = (720.0 + 18.0) / 720.0
+        self.assertAlmostEqual(ratio_l, expected_ratio, places=3)
+        self.assertAlmostEqual(new_l, config.DEFAULT_WHEEL_BASE_M * expected_ratio, places=4)
+
+        # Test save and reset
+        config.save_calibration(new_r, new_l)
+        self.assertTrue(os.path.exists(config.CALIBRATION_FILE))
+        self.assertAlmostEqual(config.WHEEL_RADIUS_M, new_r, places=4)
+
+        config.reset_calibration()
+        self.assertFalse(os.path.exists(config.CALIBRATION_FILE))
+        self.assertAlmostEqual(config.WHEEL_RADIUS_M, config.DEFAULT_WHEEL_RADIUS_M, places=4)
 
 
 if __name__ == "__main__":

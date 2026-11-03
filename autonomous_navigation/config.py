@@ -5,6 +5,9 @@ Configuration constants for autonomous distance & Cartesian navigation with obst
 Matches the ESP32 firmware Config.h and the Raspberry Pi hardware wiring.
 """
 
+import os
+import json
+import time
 import math
 
 # ==========================================
@@ -18,12 +21,69 @@ WATCHDOG_TIMEOUT_MS = 500     # ESP32 auto-stops if link lost for > 500 ms
 # ==========================================
 # ROBOT PHYSICAL DIMENSIONS & ODOMETRY
 # ==========================================
-# Must match RobotController/Config.h
-WHEEL_RADIUS_M = 0.0215       # 2.15 cm radius
-WHEEL_BASE_M = 0.134          # 13.4 cm track width between left and right wheels
-ROBOT_LENGTH_M = 0.18         # 18.0 cm physical body length
-ROBOT_WIDTH_M = 0.134         # 13.4 cm physical body width (matches wheel track)
-TICKS_PER_REV = 720.0         # Measured encoder counts per single wheel turn (Config.h)
+# Base physical specifications (factory defaults)
+DEFAULT_WHEEL_RADIUS_M = 0.0215       # 2.15 cm radius default
+DEFAULT_WHEEL_BASE_M = 0.134          # 13.4 cm track width default
+DEFAULT_TICKS_PER_REV = 720.0         # Measured encoder counts per turn
+
+WHEEL_RADIUS_M = DEFAULT_WHEEL_RADIUS_M
+WHEEL_BASE_M = DEFAULT_WHEEL_BASE_M
+ROBOT_LENGTH_M = 0.18                 # 18.0 cm physical body length
+ROBOT_WIDTH_M = 0.134                 # 13.4 cm physical body width
+TICKS_PER_REV = DEFAULT_TICKS_PER_REV
+
+# Calibration Persistence (Solution 5)
+CALIBRATION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calibration.json")
+
+def load_calibration():
+    """Loads calibrated physical dimensions from calibration.json if present."""
+    global WHEEL_RADIUS_M, WHEEL_BASE_M, TICKS_PER_REV, ROBOT_WIDTH_M
+    if os.path.exists(CALIBRATION_FILE):
+        try:
+            with open(CALIBRATION_FILE, "r") as f:
+                data = json.load(f)
+                if "wheel_radius_m" in data:
+                    WHEEL_RADIUS_M = float(data["wheel_radius_m"])
+                if "wheel_base_m" in data:
+                    WHEEL_BASE_M = float(data["wheel_base_m"])
+                    ROBOT_WIDTH_M = WHEEL_BASE_M
+                if "ticks_per_rev" in data:
+                    TICKS_PER_REV = float(data["ticks_per_rev"])
+        except Exception:
+            pass
+
+def save_calibration(wheel_radius_m: float, wheel_base_m: float, ticks_per_rev: float = None):
+    """Saves calibrated dimensions to calibration.json and updates active runtime constants."""
+    global WHEEL_RADIUS_M, WHEEL_BASE_M, TICKS_PER_REV, ROBOT_WIDTH_M
+    WHEEL_RADIUS_M = round(float(wheel_radius_m), 5)
+    WHEEL_BASE_M = round(float(wheel_base_m), 5)
+    ROBOT_WIDTH_M = WHEEL_BASE_M
+    if ticks_per_rev is not None:
+        TICKS_PER_REV = round(float(ticks_per_rev), 2)
+    data = {
+        "wheel_radius_m": WHEEL_RADIUS_M,
+        "wheel_base_m": WHEEL_BASE_M,
+        "ticks_per_rev": TICKS_PER_REV,
+        "calibrated_at": time.strftime("%Y-%m-%d %H:%M:%S")
+    }
+    with open(CALIBRATION_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+    return data
+
+def reset_calibration():
+    """Resets dimensions to factory defaults and removes calibration.json."""
+    global WHEEL_RADIUS_M, WHEEL_BASE_M, TICKS_PER_REV, ROBOT_WIDTH_M
+    WHEEL_RADIUS_M = DEFAULT_WHEEL_RADIUS_M
+    WHEEL_BASE_M = DEFAULT_WHEEL_BASE_M
+    ROBOT_WIDTH_M = WHEEL_BASE_M
+    TICKS_PER_REV = DEFAULT_TICKS_PER_REV
+    if os.path.exists(CALIBRATION_FILE):
+        try:
+            os.remove(CALIBRATION_FILE)
+        except OSError:
+            pass
+
+load_calibration()
 
 # ==========================================
 # STARTUP PUSH & DEFAULT SPEEDS
@@ -79,9 +139,16 @@ KP_HEADING_NAV = 2.2          # Proportional angular steering gain
 KD_HEADING_NAV = 0.14         # Derivative rate damping gain to prevent heading overshoots
 HEADING_DEADBAND_RAD = 0.035  # ~2.0 deg deadband: drive straight when aligned
 
-# Goal Arrival Precision & Pure Pursuit Lookahead
-GOAL_TOLERANCE_M = 0.08       # Target arrival distance tolerance in meters
-LOOKAHEAD_DIST_M = 0.35       # Pure pursuit lookahead distance (meters) along waypoint path
+# Goal Arrival Precision, Terminal Docking & Pure Pursuit Lookahead
+GOAL_TOLERANCE_M = 0.08       # Intermediate waypoint / standard arrival distance tolerance (meters)
+TERMINAL_GOAL_TOLERANCE_M = 0.025 # High-precision terminal arrival distance tolerance (2.5 cm)
+TERMINAL_DECEL_DIST_M = 0.35  # Distance (meters) where smooth multi-stage deceleration begins
+TERMINAL_CREEP_DIST_M = 0.12  # Distance (meters) where terminal precision creeping begins
+MIN_TERMINAL_CREEP_SPEED = 0.04 # Ultra-slow creeping speed (m/s) to eliminate inertia rollout
+BRAKE_PULSE_DURATION_S = 0.035 # Duration (seconds) of active reverse counter-torque pulse
+BRAKE_PULSE_SPEED = 0.18      # Speed demand (m/s) for active counter-torque braking pulse
+LOOKAHEAD_DIST_M = 0.35       # Pure pursuit maximum lookahead distance (meters) along waypoint path
+MIN_LOOKAHEAD_DIST_M = 0.08   # Pure pursuit minimum lookahead distance (meters) near destination
 FINAL_HEADING_TOLERANCE_DEG = 3.0 # Final orientation alignment tolerance in degrees
 KP_ALIGN_TURN = 0.85          # Proportional gain for in-place orientation alignment
 KD_ALIGN_TURN = 0.05          # Gyro derivative damping gain for alignment
