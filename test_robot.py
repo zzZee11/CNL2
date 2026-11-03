@@ -254,7 +254,7 @@ def move(distance_m, cruise_speed=DEFAULT_CRUISE_MPS):
     print(f"Movement complete: {travelled_m:.2f} m | Final Heading Drift: {heading_final_deg:+.1f}° [{sensor_tag}]\n")
 
 
-def turn(target_deg, max_speed=0.20):
+def turn(target_deg, max_speed=0.14):
     """
     Pivots the robot in-place by a specific angular displacement (degrees)
     using the MPU-6050 gyroscope (or encoder ticks as fallback).
@@ -276,7 +276,7 @@ def turn(target_deg, max_speed=0.20):
         ticks_per_rad = (WHEEL_BASE_M / 2.0) * (TICKS_PER_REV / (2 * math.pi * WHEEL_RADIUS_M))
         sensor_tag = "ENC"
 
-    timeout = max(5.0, abs(target_deg) / 20.0)
+    timeout = max(6.0, abs(target_deg) / 14.0)
     start_time = time.monotonic()
     last_report = 0
     current_turn = 0.0
@@ -310,14 +310,14 @@ def turn(target_deg, max_speed=0.20):
             if abs(math.degrees(angle_error)) < 2.0:
                 break
 
-            # Gentle closed-loop PD turn control (controlled speed)
-            kp_turn = 0.50
+            # Very gentle closed-loop PD turn control (slow, steady rotation)
+            kp_turn = 0.35
             kd_turn = 0.06
             omega = (kp_turn * angle_error) - (kd_turn * yaw_rate)
             omega_clamped = max(-max_speed, min(max_speed, omega))
 
             # Minimum pivot speed to overcome gearbox static friction without spinning aggressively
-            min_pivot_speed = 0.12
+            min_pivot_speed = 0.09
             if abs(omega_clamped) < min_pivot_speed:
                 omega_clamped = min_pivot_speed if omega_clamped > 0 else -min_pivot_speed
 

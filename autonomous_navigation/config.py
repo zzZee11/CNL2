@@ -30,7 +30,7 @@ TICKS_PER_REV = 720.0         # Measured encoder counts per single wheel turn (C
 STARTUP_PUSH_SPEED = 0.45     # Gentle breakaway kick demand (m/s)
 STARTUP_PUSH_DURATION_S = 0.15 # 150 ms startup kick (forward only)
 DEFAULT_SPEED = 0.40          # Default cruising speed (m/s)
-MAX_ALLOWED_SPEED = 1.0       # Safety clamp
+MAX_ALLOWED_SPEED = 0.50       # Safety clamp
 MIN_MANEUVER_SPEED = 0.08     # Minimum turning/creeping speed
 
 # Acceleration & Deceleration Slew-Rate Limits (Smooth Motion)
@@ -59,7 +59,7 @@ DEFAULT_PLOT_PATH = "autonomous_navigation/navigation_result.png"
 K_ATT = 1.4                   # Attractive force towards current waypoint
 K_REP = 0.35                  # Repulsive force away from ToF obstacles (tuned to prevent spikes)
 MAX_REP_FORCE = 1.0           # Saturation clamp on repulsive force to prevent erratic twitches
-SAFE_DIST = 0.30              # Distance (meters) at which obstacles begin repelling robot
+SAFE_DIST = 1.00              # Obstacles detected from 1.0 meter far start repelling robot (updated from 0.30)
 CRITICAL_STOP_DIST = 0.08     # Emergency stop distance (meters)
 SENSOR_ANGLES = [
     math.pi / 4.0,            # Left sensor (+45 deg)
@@ -67,15 +67,15 @@ SENSOR_ANGLES = [
     -math.pi / 4.0            # Right sensor (-45 deg)
 ]
 
-# In-Place Pivot Heading Thresholds & Speed Limits (Calm Turning)
+# In-Place Pivot Heading Thresholds & Speed Limits (Calm, Slower Turning)
 PIVOT_ENTER_RAD = 0.85        # ~49 deg: enter in-place pivot if heading error exceeds this
 PIVOT_EXIT_RAD = 0.35         # ~20 deg: exit in-place pivot only when aligned within this
-MAX_PIVOT_SPEED = 0.18        # Capped pivot speed (m/s) for calm, controlled turns (reduced from 0.26)
-MIN_PIVOT_SPEED = 0.10        # Minimum pivot speed (m/s) to overcome floor friction
+MAX_PIVOT_SPEED = 0.13        # Capped pivot speed (m/s) for very calm, controlled turns (lowered from 0.18)
+MIN_PIVOT_SPEED = 0.08        # Minimum pivot speed (m/s) to overcome floor friction
 
 # Heading Lock & Course Correction (PD Control)
-KP_HEADING_NAV = 1.6          # Proportional angular steering gain (softened from 2.2 for gentler steering)
-KD_HEADING_NAV = 0.12         # Derivative rate damping gain to prevent heading overshoots
+KP_HEADING_NAV = 1.3          # Proportional angular steering gain (softened for gentle steering)
+KD_HEADING_NAV = 0.10         # Derivative rate damping gain to prevent heading overshoots
 HEADING_DEADBAND_RAD = 0.035  # ~2.0 deg deadband: drive straight when aligned
 
 # Goal Arrival Precision & Pure Pursuit Lookahead
@@ -83,8 +83,8 @@ GOAL_TOLERANCE_M = 0.08       # Target arrival distance tolerance in meters
 LOOKAHEAD_DIST_M = 0.35       # Pure pursuit lookahead distance (meters) along waypoint path
 
 # Obstacle Mapping Persistence & Distance Filter
-OBSTACLE_PERSISTENCE_COUNT = 2 # Must see obstacle in >= 2 consecutive cycles to map it
-OBSTACLE_MAP_MAX_DIST_M = 1.20 # Ignore distant noise (>1.2m) when updating the occupancy grid
+OBSTACLE_PERSISTENCE_COUNT = 10 # Must see obstacle in >= 10 consecutive cycles to map it (safety filter)
+OBSTACLE_MAP_MAX_DIST_M = 1.00 # Detect and map obstacles within 1.0 meter far
 
 # ==========================================
 # TIME-OF-FLIGHT (VL53L0X) HARDWARE PINS (Pi BCM)
