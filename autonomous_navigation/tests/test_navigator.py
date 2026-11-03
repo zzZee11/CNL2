@@ -173,33 +173,6 @@ class TestAutonomousNavigator(unittest.TestCase):
 
         fused_comm.close()
 
-    def test_middle_obstacle_avoidance_bias(self):
-        # Target straight ahead at (1.0, 0.0), robot at (0.0, 0.0) facing theta = 0
-        # Obstacle detected ONLY at middle sensor (0.25m), left and right clear (1.5m)
-        readings = [1.50, 0.25, 1.50]
-
-        # Bias Left (+1.0): total force should push laterally left (+Y)
-        fx_left, fy_left = calculate_apf(
-            current_pos=(0.0, 0.0),
-            waypoint=(1.0, 0.0),
-            tof_readings=readings,
-            current_theta=0.0,
-            target_speed=0.5,
-            middle_bias=+1.0
-        )
-        self.assertGreater(fy_left, 0.20)
-
-        # Bias Right (-1.0): total force should push laterally right (-Y)
-        fx_right, fy_right = calculate_apf(
-            current_pos=(0.0, 0.0),
-            waypoint=(1.0, 0.0),
-            tof_readings=readings,
-            current_theta=0.0,
-            target_speed=0.5,
-            middle_bias=-1.0
-        )
-        self.assertLess(fy_right, -0.20)
-
 
 if __name__ == "__main__":
     unittest.main()

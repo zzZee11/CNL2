@@ -161,12 +161,10 @@ def is_path_blocked(waypoints, grid):
     return False
 
 
-def calculate_apf(current_pos, waypoint, tof_readings, current_theta, target_speed, middle_bias=0.0):
+def calculate_apf(current_pos, waypoint, tof_readings, current_theta, target_speed):
     """
     Computes resultant force vector from Waypoint Attraction (F_att) and
     real-time Time-of-Flight Repulsion (F_rep).
-    middle_bias: Optional lateral deflection factor (+1.0 for Left, -1.0 for Right)
-                 when an obstacle is detected dead-ahead by only the middle sensor.
     """
     # Attractive force toward current waypoint
     diff_x = waypoint[0] - current_pos[0]
@@ -195,14 +193,7 @@ def calculate_apf(current_pos, waypoint, tof_readings, current_theta, target_spe
             rep_mag = min(MAX_REP_FORCE, raw_rep)
 
             # Push away from the obstacle angle
-            if i == 1 and middle_bias != 0.0:
-                # Middle sensor (head-on): deflect push angle laterally (+1.0 -> Left, -1.0 -> Right)
-                # Deflects by 60° laterally to break head-on symmetry and steer around obstacle
-                deflection = middle_bias * math.radians(60.0)
-                push_angle = current_theta + math.pi - deflection
-            else:
-                push_angle = current_theta + SENSOR_ANGLES[i] + math.pi
-
+            push_angle = current_theta + SENSOR_ANGLES[i] + math.pi
             f_rep_x += rep_mag * math.cos(push_angle)
             f_rep_y += rep_mag * math.sin(push_angle)
 

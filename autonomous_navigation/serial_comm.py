@@ -109,11 +109,10 @@ class RobotSerialComm:
         with self.cmd_lock:
             was_stopped = (abs(self.cmd_left) < 0.02 and abs(self.cmd_right) < 0.02)
             is_forward_drive = (left > 0.05 and right > 0.05)
-            is_reverse_drive = (left < -0.05 and right < -0.05)
 
-            # Trigger gentle startup kick ONLY when transitioning from stopped to straight driving
+            # Trigger gentle startup kick ONLY when transitioning from stopped to forward driving
             # (Do NOT kick during in-place pivoting to prevent violent spin jumps)
-            if was_stopped and (is_forward_drive or is_reverse_drive):
+            if was_stopped and is_forward_drive:
                 self.push_until = time.time() + STARTUP_PUSH_DURATION_S
 
             self.cmd_left = left
@@ -202,12 +201,12 @@ class RobotSerialComm:
                 current_cmd_r = 0.0
             else:
                 if pushing:
-                    max_mag = max(abs(l), abs(r))
-                    if max_mag > 0.05:
+                    max_v = max(l, r)
+                    if max_v > 0.05:
                         # Scale both wheels proportionally to break stiction without yaw kick
-                        scale = STARTUP_PUSH_SPEED / max_mag
-                        target_l = math.copysign(min(MAX_ALLOWED_SPEED, abs(l) * scale), l)
-                        target_r = math.copysign(min(MAX_ALLOWED_SPEED, abs(r) * scale), r)
+                        scale = STARTUP_PUSH_SPEED / max_v
+                        target_l = min(MAX_ALLOWED_SPEED, l * scale)
+                        target_r = min(MAX_ALLOWED_SPEED, r * scale)
                     else:
                         target_l = l
                         target_r = r
