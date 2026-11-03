@@ -47,7 +47,7 @@ GRID_RES = 0.10               # 10 cm per cell (resolution)
 ORIGIN_OFFSET_X = 15.0        # (0, 0) starts at cell index (150, 150)
 ORIGIN_OFFSET_Y = 15.0        # (0, 0) starts at cell index (150, 150)
 
-ROBOT_CLEARANCE_RADIUS = 0.22 # 22 cm radius padding for circular obstacle inflation
+ROBOT_CLEARANCE_RADIUS = 0.15 # 15 cm radius padding for circular obstacle inflation
 CELLS_TO_INFLATE = int(math.ceil(ROBOT_CLEARANCE_RADIUS / GRID_RES))
 
 # Default path to save trajectory and obstacle map image
