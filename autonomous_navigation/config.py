@@ -60,7 +60,9 @@ K_ATT = 1.4                   # Attractive force towards current waypoint
 K_REP = 0.35                  # Repulsive force away from ToF obstacles (tuned to prevent spikes)
 MAX_REP_FORCE = 1.0           # Saturation clamp on repulsive force to prevent erratic twitches
 SAFE_DIST = 0.45              # Local APF obstacle repulsion distance (0.45m prevents corridor ping-pong)
-CRITICAL_STOP_DIST = 0.08     # Emergency stop distance (meters)
+CRITICAL_STOP_DIST = 0.18     # Emergency brake distance (meters) to trigger halt and back-off
+BACKOFF_DIST_M = 0.10         # Controlled reverse back-off distance (meters) to gain turning clearance
+BACKOFF_SPEED_MPS = 0.14      # Reverse speed (m/s) during controlled back-off
 SENSOR_ANGLES = [
     math.pi / 4.0,            # Left sensor (+45 deg)
     0.0,                      # Middle sensor (0 deg straight forward)
@@ -83,8 +85,10 @@ GOAL_TOLERANCE_M = 0.08       # Target arrival distance tolerance in meters
 LOOKAHEAD_DIST_M = 0.55       # Pure pursuit lookahead distance (meters) along waypoint path (smooth path tracking)
 
 # Obstacle Mapping Persistence & Distance Filter
-OBSTACLE_PERSISTENCE_COUNT = 10 # Must see obstacle in >= 10 consecutive cycles to map it (safety filter)
-OBSTACLE_MAP_MAX_DIST_M = 1.00 # Detect and map obstacles within 1.0 meter far
+OBSTACLE_PERSISTENCE_COUNT = 10     # Standard persistence filter for peripheral/distant obstacles (>0.35m)
+OBSTACLE_PERSISTENCE_CRITICAL = 3  # Fast-track persistence for direct close hazards (<0.35m)
+CRITICAL_CLOSE_DIST = 0.35          # Threshold (meters) to switch to fast-track persistence
+OBSTACLE_MAP_MAX_DIST_M = 1.00     # Detect and map obstacles within 1.0 meter far
 
 # ==========================================
 # TIME-OF-FLIGHT (VL53L0X) HARDWARE PINS (Pi BCM)

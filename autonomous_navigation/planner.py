@@ -88,6 +88,25 @@ def astar_grid(start_world, goal_world, grid):
     start = world_to_grid(*start_world)
     goal = world_to_grid(*goal_world)
 
+    if grid[start[0]][start[1]] == 1:
+        # If start cell is occupied (e.g. inside obstacle inflation zone), find nearest free neighbor to escape
+        found_start = False
+        for r in range(1, 15):
+            for dx in range(-r, r + 1):
+                for dy in range(-r, r + 1):
+                    cand = (start[0] + dx, start[1] + dy)
+                    if 0 <= cand[0] < GRID_DIM_X and 0 <= cand[1] < GRID_DIM_Y:
+                        if grid[cand[0]][cand[1]] == 0:
+                            start = cand
+                            found_start = True
+                            break
+                if found_start:
+                    break
+            if found_start:
+                break
+        if not found_start:
+            return []
+
     if grid[goal[0]][goal[1]] == 1:
         # If exact goal cell is marked or on boundary, find nearest free neighbor
         found = False
@@ -194,6 +213,15 @@ def calculate_apf(current_pos, waypoint, tof_readings, current_theta, target_spe
 
             # Push away from the obstacle angle
             push_angle = current_theta + SENSOR_ANGLES[i] + math.pi
+
+            # If obstacle is directly ahead on middle sensor (i = 1), add a tangential bias
+            # to break the 180° head-on deadlock towards the more open side
+            if i == 1 and num_sensors >= 3:
+                d_left = tof_readings[0] if tof_readings[0] > 0.05 else 99.0
+                d_right = tof_readings[2] if tof_readings[2] > 0.05 else 99.0
+                bias = 0.35 if d_left >= d_right else -0.35
+                push_angle += bias
+
             f_rep_x += rep_mag * math.cos(push_angle)
             f_rep_y += rep_mag * math.sin(push_angle)
 
@@ -202,13 +230,14 @@ def calculate_apf(current_pos, waypoint, tof_readings, current_theta, target_spe
     return (total_fx, total_fy)
 
 
-def calculate_kinematics(f_total, current_theta, target_speed, is_pivoting=False, d_heading_error=0.0, yaw_rate=None):
+def calculate_kinematics(f_total, current_theta, target_speed, is_pivoting=False, d_heading_error=0.0, yaw_rate=None, locked_pivot_dir=0):
     """
     Converts resultant navigation force vector into differential-drive
     wheel speeds (v_left, v_right) in meters per second.
     Includes in-place pivot with hysteresis and active PD heading damping:
       - Enter pivot when |heading_error| > PIVOT_ENTER_RAD (~49°)
       - Exit pivot only when |heading_error| < PIVOT_EXIT_RAD (~20°)
+      - Latches pivot direction via locked_pivot_dir to stop +/- 180 deg chattering
       - PD course correction with direct gyro yaw-rate damping when driving forward
     """
     norm = math.hypot(f_total[0], f_total[1])
@@ -230,7 +259,11 @@ def calculate_kinematics(f_total, current_theta, target_speed, is_pivoting=False
         err_mag = abs(heading_error)
         norm_err = min(1.0, max(0.0, (err_mag - PIVOT_EXIT_RAD) / max(0.01, PIVOT_ENTER_RAD - PIVOT_EXIT_RAD)))
         pivot_speed = MIN_PIVOT_SPEED + (MAX_PIVOT_SPEED - MIN_PIVOT_SPEED) * (norm_err ** 1.2)
-        if heading_error > 0:
+        
+        # Turn-direction latching: if already pivoting, MAINTAIN the locked direction
+        # to prevent rapid wheel-direction chattering around +/- 180 deg
+        turn_dir = locked_pivot_dir if locked_pivot_dir != 0 else (+1 if heading_error >= 0 else -1)
+        if turn_dir > 0:
             # Turn Left: Left wheel backward, Right wheel forward
             return -pivot_speed, +pivot_speed
         else:
