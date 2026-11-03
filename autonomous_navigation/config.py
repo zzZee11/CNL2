@@ -59,7 +59,7 @@ DEFAULT_PLOT_PATH = "autonomous_navigation/navigation_result.png"
 K_ATT = 1.4                   # Attractive force towards current waypoint
 K_REP = 0.35                  # Repulsive force away from ToF obstacles (tuned to prevent spikes)
 MAX_REP_FORCE = 1.0           # Saturation clamp on repulsive force to prevent erratic twitches
-SAFE_DIST = 0.45              # Local APF obstacle repulsion distance (0.45m prevents corridor ping-pong)
+SAFE_DIST = 0.60              # Local APF obstacle repulsion distance (0.45m prevents corridor ping-pong)
 CRITICAL_STOP_DIST = 0.08     # Emergency stop distance (meters)
 SENSOR_ANGLES = [
     math.pi / 4.0,            # Left sensor (+45 deg)
@@ -71,7 +71,7 @@ SENSOR_ANGLES = [
 PIVOT_ENTER_RAD = 0.85        # ~49 deg: enter in-place pivot if heading error exceeds this
 PIVOT_EXIT_RAD = 0.35         # ~20 deg: exit in-place pivot only when aligned within this
 MAX_PIVOT_SPEED = 0.25        # Capped pivot speed (m/s) for calm, controlled turns (default: 0.18 m/s)
-MIN_PIVOT_SPEED = 0.15        # Minimum pivot speed (m/s) to overcome floor friction
+MIN_PIVOT_SPEED = 0.20        # Minimum pivot speed (m/s) to overcome floor friction
 
 # Heading Lock & Course Correction (PD Control)
 KP_HEADING_NAV = 1.0          # Proportional angular steering gain (softened to eliminate limit-cycle weaving)
@@ -84,7 +84,7 @@ LOOKAHEAD_DIST_M = 0.55       # Pure pursuit lookahead distance (meters) along w
 
 # Obstacle Mapping Persistence & Distance Filter
 OBSTACLE_PERSISTENCE_COUNT = 5 # Must see obstacle in >= 5 consecutive cycles to map it (safety filter)
-OBSTACLE_MAP_MAX_DIST_M = 0.8 # Detect and map obstacles within 0.8 meter far
+OBSTACLE_MAP_MAX_DIST_M = 1.20 # Detect and map obstacles within 1.2 meter far
 
 # ==========================================
 # TIME-OF-FLIGHT (VL53L0X) HARDWARE PINS (Pi BCM)
